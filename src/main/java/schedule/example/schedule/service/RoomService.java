@@ -1,9 +1,12 @@
 package schedule.example.schedule.service;
 
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.common.PageResponse;
@@ -22,6 +25,8 @@ import java.text.MessageFormat;
 import java.util.UUID;
 
 @Service
+@Validated
+@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class RoomService {
 
@@ -29,18 +34,6 @@ public class RoomService {
 	private final RoomAssignmentRepository roomAssignmentRepository;
 	private final RoomMapper roomMapper;
 	private final NormalizedNameMaintenanceService normalizedNameMaintenanceService;
-
-	public RoomService(
-		RoomRepository roomRepository,
-		RoomAssignmentRepository roomAssignmentRepository,
-		RoomMapper roomMapper,
-		NormalizedNameMaintenanceService normalizedNameMaintenanceService
-	) {
-		this.roomRepository = roomRepository;
-		this.roomAssignmentRepository = roomAssignmentRepository;
-		this.roomMapper = roomMapper;
-		this.normalizedNameMaintenanceService = normalizedNameMaintenanceService;
-	}
 
 	public PageResponse<RoomResponse> getRooms(RoomType type, String name, Integer minCapacity, Integer maxCapacity, Pageable pageable) {
 		// Convert name to a prefix pattern on normalizedName to allow B-tree index usage.
@@ -54,7 +47,7 @@ public class RoomService {
 	}
 
 	@Transactional
-	public RoomResponse createRoom(RoomRequest request) {
+	public RoomResponse createRoom(@Valid RoomRequest request) {
 		normalizedNameMaintenanceService.synchronizeRooms();
 		validateUniqueName(request.name(), null);
 		Room room = roomMapper.toEntity(request);
@@ -62,7 +55,7 @@ public class RoomService {
 	}
 
 	@Transactional
-	public RoomResponse updateRoom(UUID id, RoomRequest request) {
+	public RoomResponse updateRoom(UUID id, @Valid RoomRequest request) {
 		normalizedNameMaintenanceService.synchronizeRooms();
 		Room room = getRoomEntity(id);
 		validateUniqueName(request.name(), id);

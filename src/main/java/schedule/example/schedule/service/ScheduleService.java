@@ -1,6 +1,8 @@
 package schedule.example.schedule.service;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.validation.annotation.Validated;
 
 import java.util.UUID;
 
@@ -13,6 +15,8 @@ import java.util.UUID;
  * succeeded, causing subtle correctness bugs.
  */
 @Service
+@Validated
+@RequiredArgsConstructor
 public class ScheduleService {
 
 	public void validateDateSlot(UUID timeSlotId) {

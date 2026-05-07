@@ -1,11 +1,13 @@
 package schedule.example.schedule.service;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 
 import schedule.example.schedule.config.CacheConfig;
 import schedule.example.schedule.dto.dashboard.DashboardSummaryResponse;
@@ -16,16 +18,13 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Validated
+@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class DashboardService {
 
     private final PersonRepository personRepository;
     private final JdbcTemplate jdbcTemplate;
-
-    public DashboardService(PersonRepository personRepository, JdbcTemplate jdbcTemplate) {
-        this.personRepository = personRepository;
-        this.jdbcTemplate     = jdbcTemplate;
-    }
 
     /**
      * Returns aggregated dashboard statistics.

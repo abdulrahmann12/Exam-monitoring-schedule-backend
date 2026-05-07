@@ -38,6 +38,9 @@ public class CacheConfig {
     /** Cache name for dashboard summary aggregates (DashboardService). */
     public static final String CACHE_DASHBOARD = "dashboard";
 
+    /** Cache name for application settings (SettingsService). */
+    public static final String CACHE_SETTINGS = "settings";
+
     @Bean
     public CacheManager cacheManager() {
         // User details: TTL 5 minutes, small max size (admin users are few)
@@ -58,8 +61,17 @@ public class CacheConfig {
                 .build()
         );
 
+        // Settings: TTL 5 minutes, single-entry (one global settings object)
+        CaffeineCache settingsCache = new CaffeineCache(
+            CACHE_SETTINGS,
+            Caffeine.newBuilder()
+                .expireAfterWrite(5, TimeUnit.MINUTES)
+                .maximumSize(1)
+                .build()
+        );
+
         SimpleCacheManager manager = new SimpleCacheManager();
-        manager.setCaches(List.of(userDetailsCache, dashboardCache));
+        manager.setCaches(List.of(userDetailsCache, dashboardCache, settingsCache));
         return manager;
     }
 }

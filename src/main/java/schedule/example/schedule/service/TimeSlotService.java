@@ -1,9 +1,12 @@
 package schedule.example.schedule.service;
 
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.common.PageResponse;
@@ -21,22 +24,14 @@ import java.text.MessageFormat;
 import java.util.UUID;
 
 @Service
+@Validated
+@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class TimeSlotService {
 
     private final TimeSlotRepository timeSlotRepository;
     private final RoomAssignmentRepository roomAssignmentRepository;
     private final TimeSlotMapper timeSlotMapper;
-
-    public TimeSlotService(
-            TimeSlotRepository timeSlotRepository,
-            RoomAssignmentRepository roomAssignmentRepository,
-            TimeSlotMapper timeSlotMapper
-    ) {
-        this.timeSlotRepository = timeSlotRepository;
-        this.roomAssignmentRepository = roomAssignmentRepository;
-        this.timeSlotMapper = timeSlotMapper;
-    }
 
     public PageResponse<TimeSlotResponse> getTimeSlots(String label, Boolean activeOnly, Pageable pageable) {
         Page<TimeSlotResponse> page = timeSlotRepository.search(label, activeOnly, pageable)
@@ -45,14 +40,14 @@ public class TimeSlotService {
     }
 
     @Transactional
-    public TimeSlotResponse createTimeSlot(TimeSlotRequest request) {
+    public TimeSlotResponse createTimeSlot(@Valid TimeSlotRequest request) {
         validateTimeRange(request);
         TimeSlot timeSlot = timeSlotMapper.toEntity(request);
         return timeSlotMapper.toResponse(timeSlotRepository.save(timeSlot));
     }
 
     @Transactional
-    public TimeSlotResponse updateTimeSlot(UUID id, TimeSlotRequest request) {
+    public TimeSlotResponse updateTimeSlot(UUID id, @Valid TimeSlotRequest request) {
         validateTimeRange(request);
         TimeSlot timeSlot = getTimeSlotEntity(id);
         timeSlotMapper.updateEntity(request, timeSlot);

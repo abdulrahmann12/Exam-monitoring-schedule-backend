@@ -1,6 +1,7 @@
 package schedule.example.schedule.service;
 
 import jakarta.persistence.EntityManager;
+import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.DataValidation;
@@ -18,8 +19,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.multipart.MultipartFile;
 import schedule.example.schedule.dto.bulk.BulkDuplicateStrategy;
 import schedule.example.schedule.dto.bulk.BulkUploadErrorDTO;
@@ -50,6 +51,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 @Service
+@Validated
+@RequiredArgsConstructor
 public class BulkUploadService {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(BulkUploadService.class);
@@ -79,25 +82,6 @@ public class BulkUploadService {
 	private final EntityManager entityManager;
 	private final TransactionTemplate transactionTemplate;
 
-	public BulkUploadService(
-		PersonRepository personRepository,
-		RoomRepository roomRepository,
-		ValidationService validationService,
-		ExcelParserUtil excelParserUtil,
-		DuplicateResolverUtil duplicateResolverUtil,
-		NormalizedNameMaintenanceService normalizedNameMaintenanceService,
-		EntityManager entityManager,
-		PlatformTransactionManager transactionManager
-	) {
-		this.personRepository = personRepository;
-		this.roomRepository = roomRepository;
-		this.validationService = validationService;
-		this.excelParserUtil = excelParserUtil;
-		this.duplicateResolverUtil = duplicateResolverUtil;
-		this.normalizedNameMaintenanceService = normalizedNameMaintenanceService;
-		this.entityManager = entityManager;
-		this.transactionTemplate = new TransactionTemplate(transactionManager);
-	}
 
 	public BulkUploadResultDTO uploadPersons(MultipartFile file, BulkDuplicateStrategy strategy) {
 		normalizedNameMaintenanceService.synchronizePeople();

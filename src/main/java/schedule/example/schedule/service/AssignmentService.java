@@ -1,11 +1,14 @@
 package schedule.example.schedule.service;
 
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.assignment.BulkRoomAssignmentRequest;
@@ -45,6 +48,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
+@Validated
+@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class AssignmentService {
 
@@ -55,21 +60,6 @@ public class AssignmentService {
     private final PersonRepository personRepository;
     private final RoomAssignmentMapper roomAssignmentMapper;
 
-    public AssignmentService(
-            RoomAssignmentRepository roomAssignmentRepository,
-            InvigilatorAssignmentRepository invigilatorAssignmentRepository,
-            RoomRepository roomRepository,
-            TimeSlotRepository timeSlotRepository,
-            PersonRepository personRepository,
-            RoomAssignmentMapper roomAssignmentMapper
-    ) {
-        this.roomAssignmentRepository = roomAssignmentRepository;
-        this.invigilatorAssignmentRepository = invigilatorAssignmentRepository;
-        this.roomRepository = roomRepository;
-        this.timeSlotRepository = timeSlotRepository;
-        this.personRepository = personRepository;
-        this.roomAssignmentMapper = roomAssignmentMapper;
-    }
 
     public PageResponse<RoomAssignmentResponse> getAssignments(
             UUID slotId, UUID roomId, Boolean locked,
@@ -81,7 +71,7 @@ public class AssignmentService {
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public RoomAssignmentResponse createAssignment(RoomAssignmentRequest request) {
+    public RoomAssignmentResponse createAssignment(@Valid RoomAssignmentRequest request) {
         RoomAssignment assignment = roomAssignmentMapper.toEntity(request);
         configureAssignmentRelations(assignment, request);
         validateAssignmentRules(assignment, null);
@@ -94,7 +84,7 @@ public class AssignmentService {
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
-    public RoomAssignmentResponse updateAssignment(UUID id, RoomAssignmentRequest request) {
+    public RoomAssignmentResponse updateAssignment(UUID id, @Valid RoomAssignmentRequest request) {
         // Fetch once with full EntityGraph — all relations are in the session.
         RoomAssignment assignment = getDetailedAssignment(id);
         Map<UUID, Integer> previousOccurrences = countAssignmentOccurrences(assignment);

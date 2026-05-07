@@ -1,9 +1,15 @@
 package schedule.example.schedule.service;
 
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CachePut;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 
 import schedule.example.schedule.config.ApplicationDefaults;
+import schedule.example.schedule.config.CacheConfig;
 import schedule.example.schedule.dto.settings.SettingsRequest;
 import schedule.example.schedule.dto.settings.SettingsResponse;
 import schedule.example.schedule.entity.Settings;
@@ -12,23 +18,22 @@ import schedule.example.schedule.mapper.SettingsMapper;
 import schedule.example.schedule.repository.SettingsRepository;
 
 @Service
+@Validated
+@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class SettingsService {
 
 	private final SettingsRepository settingsRepository;
 	private final SettingsMapper settingsMapper;
 
-	public SettingsService(SettingsRepository settingsRepository, SettingsMapper settingsMapper) {
-		this.settingsRepository = settingsRepository;
-		this.settingsMapper = settingsMapper;
-	}
-
+	@Cacheable(value = CacheConfig.CACHE_SETTINGS, key = "'settings'")
 	public SettingsResponse getSettings() {
 		return settingsMapper.toResponse(getOrCreateSettingsEntity());
 	}
 
 	@Transactional
-	public SettingsResponse updateSettings(SettingsRequest request) {
+	@CachePut(value = CacheConfig.CACHE_SETTINGS, key = "'settings'")
+	public SettingsResponse updateSettings(@Valid SettingsRequest request) {
 		Settings settings = getOrCreateSettingsEntity();
 		settingsMapper.updateEntity(request, settings);
 		settings.setId(ApplicationDefaults.DEFAULT_SETTINGS_ID);

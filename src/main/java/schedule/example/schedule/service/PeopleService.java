@@ -1,10 +1,12 @@
 package schedule.example.schedule.service;
 
 import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.common.PageResponse;
@@ -29,6 +31,8 @@ import java.util.Set;
 import java.util.UUID;
 
 @Service
+@Validated
+@RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class PeopleService {
 
@@ -38,19 +42,6 @@ public class PeopleService {
 	private final PersonMapper personMapper;
 	private final NormalizedNameMaintenanceService normalizedNameMaintenanceService;
 
-	public PeopleService(
-		PersonRepository personRepository,
-		RoomAssignmentRepository roomAssignmentRepository,
-		InvigilatorAssignmentRepository invigilatorAssignmentRepository,
-		PersonMapper personMapper,
-		NormalizedNameMaintenanceService normalizedNameMaintenanceService
-	) {
-		this.personRepository = personRepository;
-		this.roomAssignmentRepository = roomAssignmentRepository;
-		this.invigilatorAssignmentRepository = invigilatorAssignmentRepository;
-		this.personMapper = personMapper;
-		this.normalizedNameMaintenanceService = normalizedNameMaintenanceService;
-	}
 
 	/**
 	 * Returns a paginated list of people matching the given filters.
@@ -82,7 +73,7 @@ public class PeopleService {
 	}
 
 	@Transactional
-	public PersonResponse createPerson(PersonRequest request) {
+	public PersonResponse createPerson(@Valid PersonRequest request) {
 		normalizedNameMaintenanceService.synchronizePeople();
 		validateUniqueName(request.name(), null);
 		Person person = personMapper.toEntity(request);

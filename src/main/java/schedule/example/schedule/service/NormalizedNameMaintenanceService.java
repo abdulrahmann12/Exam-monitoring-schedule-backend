@@ -1,6 +1,7 @@
 package schedule.example.schedule.service;
 
 import jakarta.persistence.EntityManager;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -8,6 +9,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 import schedule.example.schedule.entity.Person;
 import schedule.example.schedule.entity.Room;
 import schedule.example.schedule.repository.PersonRepository;
@@ -34,6 +36,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * without a race window.
  */
 @Service
+@Validated
+@RequiredArgsConstructor
 public class NormalizedNameMaintenanceService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(NormalizedNameMaintenanceService.class);
@@ -46,14 +50,6 @@ public class NormalizedNameMaintenanceService {
     private final AtomicBoolean personsSynchronized = new AtomicBoolean(false);
     private final AtomicBoolean roomsSynchronized   = new AtomicBoolean(false);
 
-    public NormalizedNameMaintenanceService(
-            PersonRepository personRepository,
-            RoomRepository roomRepository,
-            EntityManager entityManager) {
-        this.personRepository = personRepository;
-        this.roomRepository   = roomRepository;
-        this.entityManager    = entityManager;
-    }
 
     /**
      * Runs both synchronizations once at startup, before the application begins serving requests.

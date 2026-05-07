@@ -1,6 +1,8 @@
 package schedule.example.schedule.service;
 
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.validation.annotation.Validated;
 import schedule.example.schedule.dto.bulk.BulkUploadErrorDTO;
 import schedule.example.schedule.util.ExcelParserUtil;
 
@@ -9,6 +11,8 @@ import java.util.List;
 import java.util.function.Function;
 
 @Service
+@Validated
+@RequiredArgsConstructor
 public class ValidationService {
 
 	public <S, T> ValidationResult<T> validateRows(
