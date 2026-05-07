@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import schedule.example.schedule.config.MessageResolver;
+import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.assignment.BulkRoomAssignmentRequest;
 import schedule.example.schedule.dto.assignment.RoomAssignmentRequest;
 import schedule.example.schedule.dto.assignment.RoomAssignmentResponse;
@@ -30,10 +30,10 @@ import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.RoomRepository;
 import schedule.example.schedule.repository.TimeSlotRepository;
 
+import java.text.MessageFormat;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -54,7 +54,6 @@ public class AssignmentService {
     private final TimeSlotRepository timeSlotRepository;
     private final PersonRepository personRepository;
     private final RoomAssignmentMapper roomAssignmentMapper;
-    private final MessageResolver messageResolver;
 
     public AssignmentService(
             RoomAssignmentRepository roomAssignmentRepository,
@@ -62,8 +61,7 @@ public class AssignmentService {
             RoomRepository roomRepository,
             TimeSlotRepository timeSlotRepository,
             PersonRepository personRepository,
-            RoomAssignmentMapper roomAssignmentMapper,
-            MessageResolver messageResolver
+            RoomAssignmentMapper roomAssignmentMapper
     ) {
         this.roomAssignmentRepository = roomAssignmentRepository;
         this.invigilatorAssignmentRepository = invigilatorAssignmentRepository;
@@ -71,7 +69,6 @@ public class AssignmentService {
         this.timeSlotRepository = timeSlotRepository;
         this.personRepository = personRepository;
         this.roomAssignmentMapper = roomAssignmentMapper;
-        this.messageResolver = messageResolver;
     }
 
     public PageResponse<RoomAssignmentResponse> getAssignments(
@@ -91,11 +88,14 @@ public class AssignmentService {
 
         RoomAssignment saved = roomAssignmentRepository.save(assignment);
         applyWorkloadDelta(Map.of(), countAssignmentOccurrences(saved));
-        return roomAssignmentMapper.toResponse(getDetailedAssignment(saved.getId()));
+
+        // Map directly from the already-populated entity — no redundant EntityGraph re-fetch.
+        return roomAssignmentMapper.toResponse(saved);
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public RoomAssignmentResponse updateAssignment(UUID id, RoomAssignmentRequest request) {
+        // Fetch once with full EntityGraph — all relations are in the session.
         RoomAssignment assignment = getDetailedAssignment(id);
         Map<UUID, Integer> previousOccurrences = countAssignmentOccurrences(assignment);
 
@@ -103,15 +103,17 @@ public class AssignmentService {
         configureAssignmentRelations(assignment, request);
         validateAssignmentRules(assignment, id);
 
-        RoomAssignment saved = roomAssignmentRepository.save(assignment);
-        applyWorkloadDelta(previousOccurrences, countAssignmentOccurrences(saved));
-        return roomAssignmentMapper.toResponse(getDetailedAssignment(saved.getId()));
+        roomAssignmentRepository.save(assignment);
+        applyWorkloadDelta(previousOccurrences, countAssignmentOccurrences(assignment));
+
+        // Relations are still in the session from the initial fetch — map directly, no re-fetch.
+        return roomAssignmentMapper.toResponse(assignment);
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public List<RoomAssignmentResponse> saveAssignmentsBulk(List<BulkRoomAssignmentRequest> requests) {
         if (requests == null || requests.isEmpty()) {
-            throw new ValidationException(messageResolver.get("assignment.bulk.empty"));
+            throw new ValidationException(Messages.ASSIGNMENT_BULK_EMPTY);
         }
 
         Map<UUID, Room> roomsById = loadRooms(requests);
@@ -135,24 +137,30 @@ public class AssignmentService {
 
         validateBulkAssignmentRules(preparedAssignments);
 
+        Set<AssignmentCompositeKey> preparedKeys = preparedAssignments.stream()
+                .map(AssignmentCompositeKey::from)
+                .collect(Collectors.toSet());
+
         List<RoomAssignment> toDelete = existingAssignments.stream()
-                .filter(existing -> preparedAssignments.stream().noneMatch(prepared -> sameSlotRoom(existing, prepared)))
+                .filter(existing -> !preparedKeys.contains(AssignmentCompositeKey.from(existing)))
                 .toList();
 
         if (!toDelete.isEmpty()) {
             roomAssignmentRepository.deleteAll(toDelete);
         }
 
+        // saveAll() sends batched INSERTs/UPDATEs in groups of hibernate.jdbc.batch_size (50).
         List<RoomAssignment> savedAssignments = roomAssignmentRepository.saveAll(preparedAssignments);
-        List<UUID> savedIds = savedAssignments.stream()
-                .map(RoomAssignment::getId)
-                .filter(Objects::nonNull)
-                .toList();
 
         Map<UUID, Integer> nextOccurrences = countAssignmentOccurrences(savedAssignments);
         applyWorkloadDelta(previousOccurrences, nextOccurrences);
 
-        return getOrderedAssignmentResponses(savedIds);
+        // Map directly from the in-session entities — all relations already populated by
+        // configureBulkAssignmentRelations(). Avoids the previous redundant EntityGraph re-fetch.
+        return savedAssignments.stream()
+                .filter(ra -> ra.getId() != null)
+                .map(roomAssignmentMapper::toResponse)
+                .toList();
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -175,7 +183,7 @@ public class AssignmentService {
 
     private RoomAssignment getDetailedAssignment(UUID id) {
         return roomAssignmentRepository.findDetailedById(id)
-                .orElseThrow(() -> new NotFoundException(messageResolver.get("assignment.not-found", id)));
+                .orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.ASSIGNMENT_NOT_FOUND, id)));
     }
 
     private Map<UUID, Room> loadRooms(List<BulkRoomAssignmentRequest> requests) {
@@ -187,7 +195,7 @@ public class AssignmentService {
 
         for (UUID roomId : roomIds) {
             if (!roomsById.containsKey(roomId)) {
-                throw new NotFoundException(messageResolver.get("room.not-found", roomId));
+                throw new NotFoundException(MessageFormat.format(Messages.ROOM_NOT_FOUND, roomId));
             }
         }
 
@@ -204,13 +212,13 @@ public class AssignmentService {
         for (UUID slotId : slotIds) {
             TimeSlot timeSlot = timeSlotsById.get(slotId);
             if (timeSlot == null) {
-                throw new NotFoundException(messageResolver.get("slot.not-found", slotId));
+                throw new NotFoundException(MessageFormat.format(Messages.SLOT_NOT_FOUND, slotId));
             }
             if (!timeSlot.isActive()) {
-                throw new ValidationException(messageResolver.get("slot.inactive"));
+                throw new ValidationException(Messages.SLOT_INACTIVE);
             }
             if (!timeSlot.getEndTime().isAfter(timeSlot.getStartTime())) {
-                throw new ValidationException(messageResolver.get("slot.invalid-range"));
+                throw new ValidationException(Messages.SLOT_INVALID_RANGE);
             }
         }
 
@@ -248,8 +256,8 @@ public class AssignmentService {
         for (BulkRoomAssignmentRequest request : requests) {
             AssignmentCompositeKey key = AssignmentCompositeKey.from(request);
             if (!keys.add(key)) {
-                throw new ValidationException(messageResolver.get(
-                        "assignment.bulk.duplicate-room-slot",
+                throw new ValidationException(MessageFormat.format(
+                        Messages.ASSIGNMENT_BULK_DUPLICATE_ROOM_SLOT,
                         request.roomId(),
                         request.slotId(),
                         request.examDate()
@@ -260,19 +268,19 @@ public class AssignmentService {
 
     private void configureAssignmentRelations(RoomAssignment assignment, RoomAssignmentRequest request) {
         Room room = roomRepository.findById(request.roomId())
-                .orElseThrow(() -> new NotFoundException(messageResolver.get("room.not-found", request.roomId())));
+                .orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.ROOM_NOT_FOUND, request.roomId())));
 
         TimeSlot timeSlot = timeSlotRepository.findById(request.timeSlotId())
-                .orElseThrow(() -> new NotFoundException(messageResolver.get("slot.not-found", request.timeSlotId())));
+                .orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.SLOT_NOT_FOUND, request.timeSlotId())));
 
         if (!timeSlot.isActive()) {
-            throw new ValidationException(messageResolver.get("slot.inactive"));
+            throw new ValidationException(Messages.SLOT_INACTIVE);
         }
         if (!timeSlot.getEndTime().isAfter(timeSlot.getStartTime())) {
-            throw new ValidationException(messageResolver.get("slot.invalid-range"));
+            throw new ValidationException(Messages.SLOT_INVALID_RANGE);
         }
         if (request.examDate() == null) {
-            throw new ValidationException(messageResolver.get("assignment.slot-date-required"));
+            throw new ValidationException(Messages.ASSIGNMENT_SLOT_DATE_REQUIRED);
         }
 
         Person chiefInvigilator = resolveChiefInvigilator(request.chiefInvigilatorId());
@@ -295,17 +303,17 @@ public class AssignmentService {
             Map<UUID, Person> peopleById
     ) {
         if (request.examDate() == null) {
-            throw new ValidationException(messageResolver.get("assignment.slot-date-required"));
+            throw new ValidationException(Messages.ASSIGNMENT_SLOT_DATE_REQUIRED);
         }
 
         Room room = roomsById.get(request.roomId());
         if (room == null) {
-            throw new NotFoundException(messageResolver.get("room.not-found", request.roomId()));
+            throw new NotFoundException(MessageFormat.format(Messages.ROOM_NOT_FOUND, request.roomId()));
         }
 
         TimeSlot timeSlot = timeSlotsById.get(request.slotId());
         if (timeSlot == null) {
-            throw new NotFoundException(messageResolver.get("slot.not-found", request.slotId()));
+            throw new NotFoundException(MessageFormat.format(Messages.SLOT_NOT_FOUND, request.slotId()));
         }
 
         Person chiefInvigilator = resolveChiefInvigilator(request.chiefInvigilatorId(), peopleById);
@@ -323,9 +331,9 @@ public class AssignmentService {
     private Person resolveChiefInvigilator(UUID chiefInvigilatorId) {
         if (chiefInvigilatorId == null) return null;
         Person chief = personRepository.findById(chiefInvigilatorId)
-                .orElseThrow(() -> new NotFoundException(messageResolver.get("person.not-found", chiefInvigilatorId)));
+                .orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.PERSON_NOT_FOUND, chiefInvigilatorId)));
         if (chief.getRole() != PersonRole.CHIEF_INVIGILATOR) {
-            throw new ValidationException(messageResolver.get("assignment.chief.role-invalid", chief.getName()));
+            throw new ValidationException(MessageFormat.format(Messages.ASSIGNMENT_CHIEF_ROLE_INVALID, chief.getName()));
         }
         return chief;
     }
@@ -337,10 +345,10 @@ public class AssignmentService {
 
         Person chief = peopleById.get(chiefInvigilatorId);
         if (chief == null) {
-            throw new NotFoundException(messageResolver.get("person.not-found", chiefInvigilatorId));
+            throw new NotFoundException(MessageFormat.format(Messages.PERSON_NOT_FOUND, chiefInvigilatorId));
         }
         if (chief.getRole() != PersonRole.CHIEF_INVIGILATOR) {
-            throw new ValidationException(messageResolver.get("assignment.chief.role-invalid", chief.getName()));
+            throw new ValidationException(MessageFormat.format(Messages.ASSIGNMENT_CHIEF_ROLE_INVALID, chief.getName()));
         }
 
         return chief;
@@ -349,17 +357,17 @@ public class AssignmentService {
     private List<Person> resolveInvigilators(List<UUID> invigilatorIds) {
         List<UUID> nonNull = invigilatorIds.stream().filter(Objects::nonNull).toList();
         if (new HashSet<>(nonNull).size() != nonNull.size()) {
-            throw new ValidationException(messageResolver.get("assignment.invigilator.duplicate"));
+            throw new ValidationException(Messages.ASSIGNMENT_INVIGILATOR_DUPLICATE);
         }
         Map<UUID, Person> peopleById = personRepository.findAllById(nonNull).stream()
                 .collect(Collectors.toMap(Person::getId, Function.identity()));
         for (UUID id : nonNull) {
             if (!peopleById.containsKey(id)) {
-                throw new NotFoundException(messageResolver.get("person.not-found", id));
+                throw new NotFoundException(MessageFormat.format(Messages.PERSON_NOT_FOUND, id));
             }
             Person p = peopleById.get(id);
             if (p.getRole() != PersonRole.INVIGILATOR) {
-                throw new ValidationException(messageResolver.get("assignment.invigilator.role-invalid", p.getName()));
+                throw new ValidationException(MessageFormat.format(Messages.ASSIGNMENT_INVIGILATOR_ROLE_INVALID, p.getName()));
             }
         }
         List<Person> ordered = new ArrayList<>(invigilatorIds.size());
@@ -372,7 +380,7 @@ public class AssignmentService {
     private List<Person> resolveInvigilators(List<UUID> invigilatorIds, Map<UUID, Person> peopleById) {
         List<UUID> nonNull = invigilatorIds.stream().filter(Objects::nonNull).toList();
         if (new HashSet<>(nonNull).size() != nonNull.size()) {
-            throw new ValidationException(messageResolver.get("assignment.invigilator.duplicate"));
+            throw new ValidationException(Messages.ASSIGNMENT_INVIGILATOR_DUPLICATE);
         }
 
         List<Person> ordered = new ArrayList<>(invigilatorIds.size());
@@ -384,10 +392,10 @@ public class AssignmentService {
 
             Person person = peopleById.get(invigilatorId);
             if (person == null) {
-                throw new NotFoundException(messageResolver.get("person.not-found", invigilatorId));
+                throw new NotFoundException(MessageFormat.format(Messages.PERSON_NOT_FOUND, invigilatorId));
             }
             if (person.getRole() != PersonRole.INVIGILATOR) {
-                throw new ValidationException(messageResolver.get("assignment.invigilator.role-invalid", person.getName()));
+                throw new ValidationException(MessageFormat.format(Messages.ASSIGNMENT_INVIGILATOR_ROLE_INVALID, person.getName()));
             }
             ordered.add(person);
         }
@@ -416,7 +424,7 @@ public class AssignmentService {
                 ? roomAssignmentRepository.existsByRoomIdAndTimeSlotIdAndExamDate(roomId, timeSlotId, examDate)
                 : roomAssignmentRepository.existsByRoomIdAndTimeSlotIdAndExamDateAndIdNot(roomId, timeSlotId, examDate, existingId);
         if (duplicate) {
-            throw new ConflictException(messageResolver.get("assignment.duplicate-room-slot", assignment.getRoom().getName()));
+            throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_DUPLICATE_ROOM_SLOT, assignment.getRoom().getName()));
         }
 
         if (assignment.getChiefInvigilator() != null) {
@@ -425,87 +433,100 @@ public class AssignmentService {
                     ? roomAssignmentRepository.countByTimeSlotIdAndExamDateAndChiefInvigilatorId(timeSlotId, examDate, assignment.getChiefInvigilator().getId())
                     : roomAssignmentRepository.countByTimeSlotIdAndExamDateAndChiefInvigilatorIdAndIdNot(timeSlotId, examDate, assignment.getChiefInvigilator().getId(), existingId);
             if (chiefCount >= assignment.getChiefInvigilator().getMaxParallelRooms()) {
-                throw new ConflictException(messageResolver.get("assignment.chief.limit", assignment.getChiefInvigilator().getName()));
+                throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_CHIEF_LIMIT, assignment.getChiefInvigilator().getName()));
             }
         }
 
-        for (InvigilatorAssignment ia : assignment.getInvigilatorAssignments()) {
-            if (ia.getInvigilator() == null) continue;
-            validateAvailability(ia.getInvigilator(), examDate, false);
-            long slotUsage = invigilatorAssignmentRepository.countSlotUsage(
-                    timeSlotId, examDate, ia.getInvigilator().getId(), existingId);
-            if (slotUsage > 0) {
-                throw new ConflictException(messageResolver.get("assignment.invigilator.double-booked", ia.getInvigilator().getName()));
+        // Collect all non-null invigilators for a single batch double-booking check.
+        List<InvigilatorAssignment> filledSlots = assignment.getInvigilatorAssignments().stream()
+                .filter(ia -> ia.getInvigilator() != null)
+                .toList();
+
+        if (!filledSlots.isEmpty()) {
+            // Availability check is in-memory — no DB calls.
+            filledSlots.forEach(ia -> validateAvailability(ia.getInvigilator(), examDate, false));
+
+            // Single IN-query replaces N individual COUNT queries (N = number of invigilators).
+            List<UUID> invigilatorIds = filledSlots.stream()
+                    .map(ia -> ia.getInvigilator().getId())
+                    .toList();
+
+            Set<UUID> doubleBooked = invigilatorAssignmentRepository.findDoubleBookedInvigilatorIds(
+                    timeSlotId, examDate, invigilatorIds, existingId);
+
+            if (!doubleBooked.isEmpty()) {
+                InvigilatorAssignment culprit = filledSlots.stream()
+                        .filter(ia -> doubleBooked.contains(ia.getInvigilator().getId()))
+                        .findFirst()
+                        .orElseThrow();
+                throw new ConflictException(MessageFormat.format(
+                        Messages.ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED, culprit.getInvigilator().getName()));
             }
         }
     }
 
+    /**
+     * Validates inter-assignment constraints for a bulk operation.
+     *
+     * <p><strong>Performance fix (O(n²) → O(n)):</strong>
+     * The previous implementation searched through all assignments with a linear stream scan
+     * for every (slot-key, personId) entry in the count maps — O(K × N) total.
+     *
+     * <p>This version builds lookup maps ({@code chiefSamples}, {@code invigilatorSamples})
+     * in the initial loop — O(N) — so violation reporting is O(1) per entry.
+     */
     private void validateBulkAssignmentRules(List<RoomAssignment> assignments) {
+        // Occurrence counts per (slotKey, personId)
         Map<SlotOccurrenceKey, Map<UUID, Integer>> chiefCounts = new HashMap<>();
         Map<SlotOccurrenceKey, Map<UUID, Integer>> invigilatorCounts = new HashMap<>();
 
+        // Sample assignment / person references for violation messages — built in same loop, O(1) lookup
+        Map<SlotOccurrenceKey, Map<UUID, RoomAssignment>> chiefSamples = new HashMap<>();
+        Map<SlotOccurrenceKey, Map<UUID, Person>> invigilatorSamples = new HashMap<>();
+
         for (RoomAssignment assignment : assignments) {
             SlotOccurrenceKey key = SlotOccurrenceKey.from(assignment);
+
             if (assignment.getChiefInvigilator() != null) {
                 validateAvailability(assignment.getChiefInvigilator(), assignment.getExamDate(), true);
-                chiefCounts.computeIfAbsent(key, ignored -> new HashMap<>())
-                        .merge(assignment.getChiefInvigilator().getId(), 1, Integer::sum);
+                UUID chiefId = assignment.getChiefInvigilator().getId();
+                chiefCounts.computeIfAbsent(key, k -> new HashMap<>()).merge(chiefId, 1, Integer::sum);
+                chiefSamples.computeIfAbsent(key, k -> new HashMap<>()).putIfAbsent(chiefId, assignment);
             }
 
-            for (InvigilatorAssignment invigilatorAssignment : assignment.getInvigilatorAssignments()) {
-                if (invigilatorAssignment.getInvigilator() == null) {
-                    continue;
-                }
-
-                validateAvailability(invigilatorAssignment.getInvigilator(), assignment.getExamDate(), false);
-                invigilatorCounts.computeIfAbsent(key, ignored -> new HashMap<>())
-                        .merge(invigilatorAssignment.getInvigilator().getId(), 1, Integer::sum);
+            for (InvigilatorAssignment ia : assignment.getInvigilatorAssignments()) {
+                if (ia.getInvigilator() == null) continue;
+                validateAvailability(ia.getInvigilator(), assignment.getExamDate(), false);
+                UUID invId = ia.getInvigilator().getId();
+                invigilatorCounts.computeIfAbsent(key, k -> new HashMap<>()).merge(invId, 1, Integer::sum);
+                invigilatorSamples.computeIfAbsent(key, k -> new HashMap<>()).putIfAbsent(invId, ia.getInvigilator());
             }
         }
 
-        chiefCounts.forEach((key, counts) -> counts.forEach((personId, count) -> {
-            RoomAssignment sample = assignments.stream()
-                    .filter(assignment -> assignment.getChiefInvigilator() != null
-                            && assignment.getChiefInvigilator().getId().equals(personId)
-                            && SlotOccurrenceKey.from(assignment).equals(key))
-                    .findFirst()
-                    .orElse(null);
-            if (sample != null && count > sample.getChiefInvigilator().getMaxParallelRooms()) {
-                throw new ConflictException(messageResolver.get("assignment.chief.limit", sample.getChiefInvigilator().getName()));
+        // Validate chief parallel-room limits — O(1) lookup per entry via chiefSamples
+        chiefCounts.forEach((key, counts) -> counts.forEach((chiefId, count) -> {
+            RoomAssignment sample = chiefSamples.get(key).get(chiefId);
+            Person chief = sample.getChiefInvigilator();
+            if (count > chief.getMaxParallelRooms()) {
+                throw new ConflictException(
+                    MessageFormat.format(Messages.ASSIGNMENT_CHIEF_LIMIT, chief.getName()));
             }
         }));
 
-        invigilatorCounts.forEach((key, counts) -> counts.forEach((personId, count) -> {
-            if (count <= 1) {
-                return;
-            }
-
-            RoomAssignment sample = assignments.stream()
-                    .filter(assignment -> SlotOccurrenceKey.from(assignment).equals(key)
-                            && assignment.getInvigilatorAssignments().stream().anyMatch(invigilatorAssignment ->
-                                    invigilatorAssignment.getInvigilator() != null
-                                            && invigilatorAssignment.getInvigilator().getId().equals(personId)))
-                    .findFirst()
-                    .orElse(null);
-            if (sample != null) {
-                Person person = sample.getInvigilatorAssignments().stream()
-                        .map(InvigilatorAssignment::getInvigilator)
-                        .filter(Objects::nonNull)
-                        .filter(candidate -> candidate.getId().equals(personId))
-                        .findFirst()
-                        .orElse(null);
-                if (person != null) {
-                    throw new ConflictException(messageResolver.get("assignment.invigilator.double-booked", person.getName()));
-                }
-            }
+        // Validate invigilator double-booking — O(1) lookup per entry via invigilatorSamples
+        invigilatorCounts.forEach((key, counts) -> counts.forEach((invId, count) -> {
+            if (count <= 1) return;
+            Person person = invigilatorSamples.get(key).get(invId);
+            throw new ConflictException(
+                MessageFormat.format(Messages.ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED, person.getName()));
         }));
     }
 
     private void validateAvailability(Person person, LocalDate examDate, boolean isChief) {
         WeekDay required = WeekDay.from(examDate.getDayOfWeek());
         if (person.getAvailableDays().contains(required)) return;
-        String key = isChief ? "assignment.chief.unavailable" : "assignment.invigilator.unavailable";
-        throw new ConflictException(messageResolver.get(key, person.getName(), required.getValue(), examDate));
+        String pattern = isChief ? Messages.ASSIGNMENT_CHIEF_UNAVAILABLE : Messages.ASSIGNMENT_INVIGILATOR_UNAVAILABLE;
+        throw new ConflictException(MessageFormat.format(pattern, person.getName(), required.getValue(), examDate));
     }
 
     private Map<UUID, Integer> countAssignmentOccurrences(RoomAssignment assignment) {
@@ -521,28 +542,58 @@ public class AssignmentService {
         return counts;
     }
 
+    /**
+     * Counts total person occurrences across a collection of assignments.
+     *
+     * <p><strong>Fix:</strong> Removed the unnecessary {@code .sorted(Comparator.comparing(...))}
+     * call from the previous implementation. Summing counts is commutative — ordering has no
+     * effect on the result, and sorting added O(n log n) overhead for zero benefit.
+     */
     private Map<UUID, Integer> countAssignmentOccurrences(Collection<RoomAssignment> assignments) {
         Map<UUID, Integer> counts = new HashMap<>();
-        assignments.stream()
-                .sorted(Comparator.comparing(RoomAssignment::getExamDate))
-                .forEach(assignment -> countAssignmentOccurrences(assignment)
-                        .forEach((personId, value) -> counts.merge(personId, value, Integer::sum)));
+        for (RoomAssignment assignment : assignments) {
+            countAssignmentOccurrences(assignment)
+                .forEach((personId, value) -> counts.merge(personId, value, Integer::sum));
+        }
         return counts;
     }
 
-    private boolean sameSlotRoom(RoomAssignment left, RoomAssignment right) {
-        return Objects.equals(left.getExamDate(), right.getExamDate())
-                && Objects.equals(left.getTimeSlot().getId(), right.getTimeSlot().getId())
-                && Objects.equals(left.getRoom().getId(), right.getRoom().getId());
-    }
-
+    /**
+     * Updates {@code totalAssignments} for all affected persons using a single batch operation.
+     *
+     * <p><strong>Performance fix:</strong> the previous implementation called
+     * {@code personRepository.adjustTotalAssignments(personId, delta)} once per person in a loop,
+     * issuing N individual UPDATE round-trips. This version:
+     * <ol>
+     *   <li>Computes net deltas in memory (no DB call).</li>
+     *   <li>Loads all affected persons in a single {@code SELECT ... IN} query.</li>
+     *   <li>Updates {@code totalAssignments} in-memory for each person.</li>
+     *   <li>Calls {@code saveAll()} which sends all UPDATEs as a single JDBC batch
+     *       (requires {@code hibernate.jdbc.batch_size=50} + {@code rewriteBatchedStatements=true}
+     *       in the JDBC URL — both configured in application.properties).</li>
+     * </ol>
+     * Result: N DB round-trips → 1 SELECT + 1 batched UPDATE round-trip.
+     */
     private void applyWorkloadDelta(Map<UUID, Integer> before, Map<UUID, Integer> after) {
-        Set<UUID> personIds = new HashSet<>(before.keySet());
-        personIds.addAll(after.keySet());
-        for (UUID personId : personIds) {
+        Map<UUID, Integer> netDeltas = new HashMap<>();
+        Set<UUID> allIds = new HashSet<>(before.keySet());
+        allIds.addAll(after.keySet());
+
+        for (UUID personId : allIds) {
             int delta = after.getOrDefault(personId, 0) - before.getOrDefault(personId, 0);
-            if (delta != 0) personRepository.adjustTotalAssignments(personId, delta);
+            if (delta != 0) netDeltas.put(personId, delta);
         }
+
+        if (netDeltas.isEmpty()) return;
+
+        List<Person> people = personRepository.findAllById(netDeltas.keySet());
+        for (Person person : people) {
+            Integer delta = netDeltas.get(person.getId());
+            if (delta != null) {
+                person.setTotalAssignments(person.getTotalAssignments() + delta);
+            }
+        }
+        personRepository.saveAll(people);
     }
 
     private record AssignmentCompositeKey(LocalDate examDate, UUID slotId, UUID roomId) {

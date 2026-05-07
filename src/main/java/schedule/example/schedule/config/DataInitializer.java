@@ -1,5 +1,7 @@
 package schedule.example.schedule.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -11,27 +13,33 @@ import schedule.example.schedule.entity.Settings;
 import schedule.example.schedule.entity.enums.ThemeMode;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.repository.SettingsRepository;
+import schedule.example.schedule.security.AdminUserDetailsService;
 
 import java.util.Locale;
 
 @Component
 public class DataInitializer implements ApplicationRunner {
 
+	private static final Logger LOGGER = LoggerFactory.getLogger(DataInitializer.class);
+
 	private final AdminUserRepository adminUserRepository;
 	private final SettingsRepository settingsRepository;
 	private final BootstrapAdminProperties bootstrapAdminProperties;
 	private final PasswordEncoder passwordEncoder;
+	private final AdminUserDetailsService adminUserDetailsService;
 
 	public DataInitializer(
 		AdminUserRepository adminUserRepository,
 		SettingsRepository settingsRepository,
 		BootstrapAdminProperties bootstrapAdminProperties,
-		PasswordEncoder passwordEncoder
+		PasswordEncoder passwordEncoder,
+		AdminUserDetailsService adminUserDetailsService
 	) {
 		this.adminUserRepository = adminUserRepository;
 		this.settingsRepository = settingsRepository;
 		this.bootstrapAdminProperties = bootstrapAdminProperties;
 		this.passwordEncoder = passwordEncoder;
+		this.adminUserDetailsService = adminUserDetailsService;
 	}
 
 	@Override
@@ -46,13 +54,20 @@ public class DataInitializer implements ApplicationRunner {
 		);
 		String normalizedEmail = bootstrapEmail.trim().toLowerCase(Locale.ROOT);
 
-		adminUserRepository.findByEmailIgnoreCase(normalizedEmail)
+		AdminUser adminUser = adminUserRepository.findByEmailIgnoreCase(normalizedEmail)
 			.orElseGet(() -> {
-				AdminUser adminUser = new AdminUser();
-				adminUser.setEmail(normalizedEmail);
-				adminUser.setPasswordHash(passwordEncoder.encode(bootstrapPassword));
-				return adminUserRepository.save(adminUser);
+				AdminUser newAdmin = new AdminUser();
+				newAdmin.setEmail(normalizedEmail);
+				return newAdmin;
 			});
+
+		// Always sync the password so changing app.bootstrap-admin.password takes effect on restart.
+		adminUser.setPasswordHash(passwordEncoder.encode(bootstrapPassword));
+		adminUserRepository.save(adminUser);
+
+		// Evict any stale cached UserDetails so the new password hash is used immediately.
+		adminUserDetailsService.evictUserCache(normalizedEmail);
+		LOGGER.info("Bootstrap admin account synced for: {}", normalizedEmail);
 
 		if (!settingsRepository.existsById(ApplicationDefaults.DEFAULT_SETTINGS_ID)) {
 			Settings settings = new Settings();

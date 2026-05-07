@@ -60,19 +60,21 @@ public class ExcelParserUtil {
 	private boolean isEmptyRow(Row row, DataFormatter formatter, FormulaEvaluator evaluator) {
 		int lastCellIndex = Math.max(row.getLastCellNum(), 0);
 		for (int cellIndex = 0; cellIndex < lastCellIndex; cellIndex++) {
-			if (!readCell(row.getCell(cellIndex), formatter, evaluator).isBlank()) {
+			if (!formatCell(row.getCell(cellIndex), formatter, evaluator).isBlank()) {
 				return false;
 			}
 		}
-
 		return true;
 	}
 
-	private String readCell(Cell cell, DataFormatter formatter, FormulaEvaluator evaluator) {
+	/**
+	 * Static utility used by both {@link #isEmptyRow} and {@link RowValues#getString}.
+	 * Extracted to avoid duplication and to allow {@link RowValues} to be a static class.
+	 */
+	static String formatCell(Cell cell, DataFormatter formatter, FormulaEvaluator evaluator) {
 		if (cell == null) {
 			return "";
 		}
-
 		return formatter.formatCellValue(cell, evaluator).trim();
 	}
 
@@ -87,20 +89,28 @@ public class ExcelParserUtil {
 	public record ParsedRow<T>(int rowNumber, T value) {
 	}
 
-	public final class RowValues {
+	/**
+	 * Provides typed cell access for a single Excel row.
+	 *
+	 * <p><strong>Fix:</strong> Changed from a non-static inner class to a {@code static}
+	 * nested class. The previous non-static version held an implicit reference to the
+	 * enclosing {@link ExcelParserUtil} singleton bean, preventing GC of intermediate
+	 * objects during large file processing and causing memory pressure.
+	 */
+	public static final class RowValues {
 
 		private final Row row;
 		private final DataFormatter formatter;
 		private final FormulaEvaluator evaluator;
 
-		private RowValues(Row row, DataFormatter formatter, FormulaEvaluator evaluator) {
+		RowValues(Row row, DataFormatter formatter, FormulaEvaluator evaluator) {
 			this.row = row;
 			this.formatter = formatter;
 			this.evaluator = evaluator;
 		}
 
 		public String getString(int cellIndex) {
-			return readCell(row.getCell(cellIndex), formatter, evaluator);
+			return formatCell(row.getCell(cellIndex), formatter, evaluator);
 		}
 	}
 }

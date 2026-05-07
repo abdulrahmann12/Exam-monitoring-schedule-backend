@@ -1,42 +1,59 @@
 package schedule.example.schedule.service;
 
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import schedule.example.schedule.config.CacheConfig;
 import schedule.example.schedule.dto.dashboard.DashboardSummaryResponse;
 import schedule.example.schedule.dto.dashboard.DashboardSummaryResponse.TopAssignedPerson;
-import schedule.example.schedule.entity.enums.PersonRole;
 import schedule.example.schedule.repository.PersonRepository;
-import schedule.example.schedule.repository.RoomAssignmentRepository;
-import schedule.example.schedule.repository.RoomRepository;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 @Transactional(readOnly = true)
 public class DashboardService {
 
     private final PersonRepository personRepository;
-    private final RoomRepository roomRepository;
-    private final RoomAssignmentRepository roomAssignmentRepository;
+    private final JdbcTemplate jdbcTemplate;
 
-    public DashboardService(
-            PersonRepository personRepository,
-            RoomRepository roomRepository,
-            RoomAssignmentRepository roomAssignmentRepository
-    ) {
+    public DashboardService(PersonRepository personRepository, JdbcTemplate jdbcTemplate) {
         this.personRepository = personRepository;
-        this.roomRepository = roomRepository;
-        this.roomAssignmentRepository = roomAssignmentRepository;
+        this.jdbcTemplate     = jdbcTemplate;
     }
 
+    /**
+     * Returns aggregated dashboard statistics.
+     *
+     * <p><strong>Performance fix — single aggregate query:</strong> The previous implementation
+     * issued 4 sequential COUNT queries (chiefs, invigilators, active rooms, total assignments).
+     * Each query required a separate network round-trip to the remote DB.
+     *
+     * <p>This version combines all four counts into one correlated subquery statement executed
+     * in a single round-trip. The result is cached for 60 seconds (see {@link CacheConfig}), so
+     * this query only runs at most once per minute regardless of dashboard request volume.
+     *
+     * <p>Result: 4 sequential DB round-trips → 1 round-trip (on cache miss).
+     */
+    @Cacheable(value = CacheConfig.CACHE_DASHBOARD, key = "'summary'")
     public DashboardSummaryResponse getSummary() {
-        long chiefs = personRepository.countByRoleAndActiveTrue(PersonRole.CHIEF_INVIGILATOR);
-        long invigilators = personRepository.countByRoleAndActiveTrue(PersonRole.INVIGILATOR);
-        long rooms = roomRepository.countByActiveTrue();
-        long totalAssignments = roomAssignmentRepository.count();
+        Map<String, Object> counts = jdbcTemplate.queryForMap("""
+            SELECT
+                (SELECT COUNT(*) FROM people WHERE role = 'CHIEF_INVIGILATOR' AND active = TRUE) AS chiefs,
+                (SELECT COUNT(*) FROM people WHERE role = 'INVIGILATOR'       AND active = TRUE) AS invigilators,
+                (SELECT COUNT(*) FROM rooms   WHERE active = TRUE)                               AS rooms,
+                (SELECT COUNT(*) FROM room_assignments)                                          AS assignments
+            """);
+
+        long chiefs           = ((Number) counts.get("chiefs")).longValue();
+        long invigilators     = ((Number) counts.get("invigilators")).longValue();
+        long rooms            = ((Number) counts.get("rooms")).longValue();
+        long totalAssignments = ((Number) counts.get("assignments")).longValue();
 
         List<TopAssignedPerson> top = personRepository
                 .findTop10ByActiveTrueOrderByTotalAssignmentsDesc(

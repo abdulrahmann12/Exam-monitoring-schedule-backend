@@ -7,7 +7,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.stereotype.Service;
 
-import schedule.example.schedule.config.MessageResolver;
+import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.auth.AuthResponse;
 import schedule.example.schedule.dto.auth.LoginRequest;
 import schedule.example.schedule.security.JwtTokenProvider;
@@ -17,16 +17,13 @@ public class AuthService {
 
 	private final AuthenticationManager authenticationManager;
 	private final JwtTokenProvider jwtTokenProvider;
-	private final MessageResolver messageResolver;
 
 	public AuthService(
 		AuthenticationManager authenticationManager,
-		JwtTokenProvider jwtTokenProvider,
-		MessageResolver messageResolver
+		JwtTokenProvider jwtTokenProvider
 	) {
 		this.authenticationManager = authenticationManager;
 		this.jwtTokenProvider = jwtTokenProvider;
-		this.messageResolver = messageResolver;
 	}
 
 	public AuthResponse login(LoginRequest request) {
@@ -39,7 +36,7 @@ public class AuthService {
 
 			return new AuthResponse(tokenDetails.token(), "Bearer", tokenDetails.expiresAt(), authentication.getName());
 		} catch (AuthenticationException ex) {
-			throw new BadCredentialsException(messageResolver.get("auth.invalid-credentials"), ex);
+			throw new BadCredentialsException(Messages.AUTH_INVALID_CREDENTIALS, ex);
 		}
 	}
 }

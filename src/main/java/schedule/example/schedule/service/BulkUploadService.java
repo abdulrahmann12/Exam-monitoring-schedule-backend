@@ -238,8 +238,11 @@ public class BulkUploadService {
 		}
 
 		Integer capacity = parseInteger(source.capacity(), DEFAULT_ROOM_CAPACITY, "Capacity", 1, errors);
+
+		// FIX: store normalizeWhitespace result to avoid calling it twice on the same value
+		String normalizedType = NameNormalizationUtil.normalizeWhitespace(source.type());
 		Optional<RoomType> roomType = parseEnum(source.type(), RoomType::valueOf);
-		if (NameNormalizationUtil.normalizeWhitespace(source.type()) == null || NameNormalizationUtil.normalizeWhitespace(source.type()).isBlank()) {
+		if (normalizedType == null || normalizedType.isBlank()) {
 			roomType = Optional.of(DEFAULT_ROOM_TYPE);
 		} else if (roomType.isEmpty()) {
 			errors.add("Invalid room type. Expected SMALL, MEDIUM, or LARGE.");

@@ -85,18 +85,39 @@ public interface RoomAssignmentRepository extends JpaRepository<RoomAssignment, 
 	@Query("select ra from RoomAssignment ra where ra.id = :id")
 	Optional<RoomAssignment> findDetailedById(@Param("id") UUID id);
 
+	/**
+	 * Returns only the exam dates of future chief-invigilator assignments for a person.
+	 *
+	 * <p><strong>Performance fix:</strong> the previous version returned full {@code RoomAssignment}
+	 * entities with {@code timeSlot} join-fetched. The caller only needs {@code examDate} to check
+	 * availability. Selecting the scalar date eliminates loading of room, subject, source, and all
+	 * other columns — drastically reducing data transferred from the DB.
+	 */
 	@Query("""
-		select distinct ra from RoomAssignment ra
-		join fetch ra.timeSlot ts
+		select ra.examDate from RoomAssignment ra
 		where ra.chiefInvigilator.id = :personId
+		and ra.examDate >= :fromDate
 		""")
-	List<RoomAssignment> findAllChiefAssignmentsByPersonId(@Param("personId") UUID personId);
+	List<LocalDate> findFutureChiefExamDatesByPersonId(
+		@Param("personId") UUID personId,
+		@Param("fromDate") LocalDate fromDate
+	);
 
+	/**
+	 * Returns only the exam dates of future invigilator assignments for a person.
+	 *
+	 * <p>Same rationale as {@link #findFutureChiefExamDatesByPersonId} — scalar projection
+	 * instead of full entity loading.
+	 */
 	@Query("""
-		select distinct ra from RoomAssignment ra
-		join fetch ra.timeSlot ts
+		select distinct ra.examDate from RoomAssignment ra
 		join ra.invigilatorAssignments ia
 		where ia.invigilator.id = :personId
+		and ra.examDate >= :fromDate
 		""")
-	List<RoomAssignment> findAllInvigilatorAssignmentsByPersonId(@Param("personId") UUID personId);
+	List<LocalDate> findFutureInvigilatorExamDatesByPersonId(
+		@Param("personId") UUID personId,
+		@Param("fromDate") LocalDate fromDate
+	);
 }
+

@@ -22,7 +22,12 @@ import java.util.UUID;
 @Table(
         name = "invigilator_assignments",
         indexes = {
-                @Index(name = "idx_invigilator_assignment_person", columnList = "invigilator_id")
+                // Index on invigilator_id: supports existsByInvigilatorId and countSlotUsage queries
+                @Index(name = "idx_invigilator_assignment_person", columnList = "invigilator_id"),
+                // Index on room_assignment_id: critical for Hibernate joining this table when loading
+                // RoomAssignment.invigilatorAssignments via EntityGraph. Without this, every
+                // detail fetch causes a full table scan on invigilator_assignments.
+                @Index(name = "idx_invigilator_assignment_room", columnList = "room_assignment_id")
         }
 )
 public class InvigilatorAssignment {

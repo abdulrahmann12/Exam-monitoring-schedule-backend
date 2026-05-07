@@ -5,7 +5,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import schedule.example.schedule.config.MessageResolver;
+import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.common.PageResponse;
 import schedule.example.schedule.dto.timeslot.TimeSlotRequest;
 import schedule.example.schedule.dto.timeslot.TimeSlotResponse;
@@ -17,6 +17,7 @@ import schedule.example.schedule.mapper.TimeSlotMapper;
 import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.TimeSlotRepository;
 
+import java.text.MessageFormat;
 import java.util.UUID;
 
 @Service
@@ -26,18 +27,15 @@ public class TimeSlotService {
     private final TimeSlotRepository timeSlotRepository;
     private final RoomAssignmentRepository roomAssignmentRepository;
     private final TimeSlotMapper timeSlotMapper;
-    private final MessageResolver messageResolver;
 
     public TimeSlotService(
             TimeSlotRepository timeSlotRepository,
             RoomAssignmentRepository roomAssignmentRepository,
-            TimeSlotMapper timeSlotMapper,
-            MessageResolver messageResolver
+            TimeSlotMapper timeSlotMapper
     ) {
         this.timeSlotRepository = timeSlotRepository;
         this.roomAssignmentRepository = roomAssignmentRepository;
         this.timeSlotMapper = timeSlotMapper;
-        this.messageResolver = messageResolver;
     }
 
     public PageResponse<TimeSlotResponse> getTimeSlots(String label, Boolean activeOnly, Pageable pageable) {
@@ -65,7 +63,7 @@ public class TimeSlotService {
     public void deleteTimeSlot(UUID id) {
         TimeSlot timeSlot = getTimeSlotEntity(id);
         if (roomAssignmentRepository.existsByTimeSlotId(id)) {
-            throw new ConflictException(messageResolver.get("slot.delete.in-use",
+            throw new ConflictException(MessageFormat.format(Messages.SLOT_DELETE_IN_USE,
                     timeSlot.getLabel() != null ? timeSlot.getLabel() : id.toString(),
                     timeSlot.getStartTime()));
         }
@@ -82,12 +80,12 @@ public class TimeSlotService {
 
     private TimeSlot getTimeSlotEntity(UUID id) {
         return timeSlotRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException(messageResolver.get("slot.not-found", id)));
+                .orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.SLOT_NOT_FOUND, id)));
     }
 
     private void validateTimeRange(TimeSlotRequest request) {
         if (!request.endTime().isAfter(request.startTime())) {
-            throw new ValidationException(messageResolver.get("slot.invalid-range"));
+            throw new ValidationException(Messages.SLOT_INVALID_RANGE);
         }
     }
 }

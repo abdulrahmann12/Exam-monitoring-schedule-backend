@@ -14,6 +14,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.BatchSize;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -34,8 +35,10 @@ import java.util.UUID;
         indexes = {
                 @Index(name = "idx_person_role", columnList = "role"),
                 @Index(name = "idx_person_name", columnList = "name"),
-                        @Index(name = "idx_person_normalized_name", columnList = "normalized_name", unique = true),
-                @Index(name = "idx_person_active", columnList = "active")
+                @Index(name = "idx_person_normalized_name", columnList = "normalized_name", unique = true),
+                @Index(name = "idx_person_active", columnList = "active"),
+                // Supports trailing-wildcard LIKE on department for prefix search
+                @Index(name = "idx_person_department", columnList = "department")
         }
 )
 public class Person {
@@ -57,10 +60,26 @@ public class Person {
         @Column(nullable = false, length = 32)
         private PersonRole role;
 
-        @ElementCollection(fetch = FetchType.EAGER)
-        @CollectionTable(name = "person_available_days", joinColumns = @JoinColumn(name = "person_id"))
+        /**
+         * Changed from EAGER to LAZY to fix N+1 problem on paginated Person queries.
+         * Each page of 20 persons previously triggered 20 extra SELECT queries for available days.
+         *
+         * @BatchSize(size = 50) causes Hibernate to batch-load available days for up to 50
+         * persons in a single IN-clause query when the collection IS accessed, instead of
+         * issuing one query per person.
+         *
+         * All code that accesses availableDays runs inside @Transactional service methods,
+         * so lazy loading is safe throughout the application.
+         */
+        @ElementCollection(fetch = FetchType.LAZY)
+        @CollectionTable(
+                name = "person_available_days",
+                joinColumns = @JoinColumn(name = "person_id"),
+                indexes = @Index(name = "idx_person_available_days_person_id", columnList = "person_id")
+        )
         @Column(name = "available_day", nullable = false, length = 16)
         @Enumerated(EnumType.STRING)
+        @BatchSize(size = 50)
         private Set<WeekDay> availableDays = new LinkedHashSet<>();
 
         @Column(nullable = false)
@@ -75,7 +94,8 @@ public class Person {
 
         /**
          * Maximum rooms this person may supervise in a single time slot.
-         * Policy: 2 for CHIEF_INVIGILATOR, 1 for INVIGILATOR.
+         * Derived from role: 2 for CHIEF_INVIGILATOR, 1 for INVIGILATOR.
+         * Do NOT set this independently — always use {@link #setRole(PersonRole)}.
          */
         @Column(nullable = false)
         private int maxParallelRooms = 1;
@@ -101,12 +121,21 @@ public class Person {
         }
 
         public String getNormalizedName() { return normalizedName; }
-        public void setNormalizedName(String normalizedName) { this.normalizedName = NameNormalizationUtil.normalizeForComparison(normalizedName); }
+        /** Prefer {@link #setName(String)} which keeps normalizedName in sync automatically. */
+        public void setNormalizedName(String normalizedName) {
+                this.normalizedName = NameNormalizationUtil.normalizeForComparison(normalizedName);
+        }
 
         public String getDepartment() { return department; }
-        public void setDepartment(String department) { this.department = NameNormalizationUtil.normalizeWhitespace(department); }
+        public void setDepartment(String department) {
+                this.department = NameNormalizationUtil.normalizeWhitespace(department);
+        }
 
         public PersonRole getRole() { return role; }
+        /**
+         * Sets the role and derives {@link #maxParallelRooms} from it automatically.
+         * CHIEF_INVIGILATOR → 2 parallel rooms; INVIGILATOR → 1.
+         */
         public void setRole(PersonRole role) {
                 this.role = role;
                 this.maxParallelRooms = (role == PersonRole.CHIEF_INVIGILATOR) ? 2 : 1;
@@ -122,6 +151,11 @@ public class Person {
         public void setActive(boolean active) { this.active = active; }
 
         public int getMaxParallelRooms() { return maxParallelRooms; }
+        /**
+         * @deprecated Prefer {@link #setRole(PersonRole)} which derives maxParallelRooms
+         *             automatically. Calling this setter bypasses that invariant.
+         */
+        @Deprecated
         public void setMaxParallelRooms(int maxParallelRooms) { this.maxParallelRooms = maxParallelRooms; }
 
         public Instant getCreatedAt() { return createdAt; }

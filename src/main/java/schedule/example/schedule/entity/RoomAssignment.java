@@ -17,6 +17,7 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import org.hibernate.annotations.BatchSize;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -41,7 +42,14 @@ import java.util.UUID;
                 @Index(name = "idx_room_assignment_date", columnList = "exam_date"),
                 @Index(name = "idx_room_assignment_time_slot", columnList = "time_slot_id"),
                 @Index(name = "idx_room_assignment_chief", columnList = "chief_invigilator_id"),
-                @Index(name = "idx_room_assignment_locked", columnList = "is_locked")
+                @Index(name = "idx_room_assignment_locked", columnList = "is_locked"),
+                // Composite indexes for the most common multi-column validation queries.
+                // (time_slot_id, exam_date, chief_invigilator_id) eliminates multi-range scans
+                // when counting chief parallel rooms — called on every assignment save.
+                @Index(name = "idx_ra_slot_date_chief", columnList = "time_slot_id, exam_date, chief_invigilator_id"),
+                // (exam_date, time_slot_id) speeds up bulk schedule loads that filter by
+                // date range + slot — used by findAllDetailedByExamDateInAndTimeSlotIdIn.
+                @Index(name = "idx_ra_date_slot", columnList = "exam_date, time_slot_id")
         }
 )
 public class RoomAssignment {
@@ -90,6 +98,13 @@ public class RoomAssignment {
         @Column(name = "source", nullable = false, length = 16)
         private AssignmentSource source = AssignmentSource.MANUAL;
 
+        /**
+         * @BatchSize(size = 25): if invigilatorAssignments is ever accessed outside an
+         * @EntityGraph fetch, Hibernate batches up to 25 collection loads in a single
+         * IN-clause query instead of firing one SELECT per RoomAssignment. This is a safety
+         * net — all hot paths already use @EntityGraph to eagerly load the collection.
+         */
+        @BatchSize(size = 25)
         @OneToMany(mappedBy = "roomAssignment", cascade = CascadeType.ALL, orphanRemoval = true)
         @OrderColumn(name = "position_index")
         private List<InvigilatorAssignment> invigilatorAssignments = new ArrayList<>();

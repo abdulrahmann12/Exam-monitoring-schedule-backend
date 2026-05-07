@@ -5,7 +5,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import schedule.example.schedule.config.MessageResolver;
+import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.common.PageResponse;
 import schedule.example.schedule.dto.room.RoomRequest;
 import schedule.example.schedule.dto.room.RoomResponse;
@@ -18,6 +18,7 @@ import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.RoomRepository;
 import schedule.example.schedule.util.NameNormalizationUtil;
 
+import java.text.MessageFormat;
 import java.util.UUID;
 
 @Service
@@ -27,25 +28,27 @@ public class RoomService {
 	private final RoomRepository roomRepository;
 	private final RoomAssignmentRepository roomAssignmentRepository;
 	private final RoomMapper roomMapper;
-	private final MessageResolver messageResolver;
 	private final NormalizedNameMaintenanceService normalizedNameMaintenanceService;
 
 	public RoomService(
 		RoomRepository roomRepository,
 		RoomAssignmentRepository roomAssignmentRepository,
 		RoomMapper roomMapper,
-		MessageResolver messageResolver,
 		NormalizedNameMaintenanceService normalizedNameMaintenanceService
 	) {
 		this.roomRepository = roomRepository;
 		this.roomAssignmentRepository = roomAssignmentRepository;
 		this.roomMapper = roomMapper;
-		this.messageResolver = messageResolver;
 		this.normalizedNameMaintenanceService = normalizedNameMaintenanceService;
 	}
 
 	public PageResponse<RoomResponse> getRooms(RoomType type, String name, Integer minCapacity, Integer maxCapacity, Pageable pageable) {
-		Page<RoomResponse> page = roomRepository.search(type, name, minCapacity, maxCapacity, pageable)
+		// Convert name to a prefix pattern on normalizedName to allow B-tree index usage.
+		// Trailing-only wildcard 'term%' on an indexed column avoids full table scans.
+		String namePattern = (name != null && !name.isBlank())
+			? schedule.example.schedule.util.NameNormalizationUtil.normalizeForComparison(name) + "%"
+			: null;
+		Page<RoomResponse> page = roomRepository.search(type, namePattern, minCapacity, maxCapacity, pageable)
 			.map(roomMapper::toResponse);
 		return PageResponse.from(page);
 	}
@@ -71,7 +74,7 @@ public class RoomService {
 	public void deleteRoom(UUID id) {
 		Room room = getRoomEntity(id);
 		if (roomAssignmentRepository.existsByRoomId(id)) {
-			throw new ConflictException(messageResolver.get("room.delete.in-use", room.getName()));
+			throw new ConflictException(MessageFormat.format(Messages.ROOM_DELETE_IN_USE, room.getName()));
 		}
 
 		roomRepository.delete(room);
@@ -79,7 +82,7 @@ public class RoomService {
 
 	private Room getRoomEntity(UUID id) {
 		return roomRepository.findById(id)
-			.orElseThrow(() -> new NotFoundException(messageResolver.get("room.not-found", id)));
+			.orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.ROOM_NOT_FOUND, id)));
 	}
 
 	private void validateUniqueName(String roomName, UUID existingId) {
@@ -87,7 +90,7 @@ public class RoomService {
 		roomRepository.findByNormalizedName(normalizedName)
 			.filter(existing -> existingId == null || !existing.getId().equals(existingId))
 			.ifPresent(existing -> {
-				throw new ConflictException(messageResolver.get("room.name.exists", roomName));
+				throw new ConflictException(MessageFormat.format(Messages.ROOM_NAME_EXISTS, roomName));
 			});
 	}
 }

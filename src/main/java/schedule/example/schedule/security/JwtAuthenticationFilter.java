@@ -1,5 +1,6 @@
 package schedule.example.schedule.security;
 
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -18,6 +19,19 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
+/**
+ * JWT authentication filter.
+ *
+ * <p>Optimizations applied:
+ * <ul>
+ *   <li>Token is parsed <em>once</em> via {@link JwtTokenProvider#parseAndValidate(String)},
+ *       which performs HMAC verification and expiry check in a single JJWT pass.
+ *       The previous implementation called {@code extractSubject()} then {@code isValid()},
+ *       causing two full HMAC-SHA256 operations per request.</li>
+ *   <li>If the {@link SecurityContextHolder} already holds an authentication (e.g., from a
+ *       previous filter), parsing is skipped entirely.</li>
+ * </ul>
+ */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -38,8 +52,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 	}
 
 	@Override
-	protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+	protected void doFilterInternal(HttpServletRequest request,
+	                                HttpServletResponse response,
+	                                FilterChain filterChain)
 		throws ServletException, IOException {
+
 		String authorizationHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
 
 		if (!StringUtils.hasText(authorizationHeader) || !authorizationHeader.startsWith(TOKEN_PREFIX)) {
@@ -50,28 +67,31 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 		String token = authorizationHeader.substring(TOKEN_PREFIX.length());
 
 		try {
+			// Skip if already authenticated (earlier filter in chain set authentication)
 			if (SecurityContextHolder.getContext().getAuthentication() == null) {
-				String subject = jwtTokenProvider.extractSubject(token);
+				// Single parse: validates signature + expiry, returns claims — no second call needed
+				Claims claims = jwtTokenProvider.parseAndValidate(token);
+				String subject = claims.getSubject();
+
 				UserDetails userDetails = adminUserDetailsService.loadUserByUsername(subject);
 
-				if (jwtTokenProvider.isValid(token, userDetails)) {
-					UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-						userDetails,
-						null,
-						userDetails.getAuthorities()
-					);
-					authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-					SecurityContextHolder.getContext().setAuthentication(authentication);
-				}
+				UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+					userDetails,
+					null,
+					userDetails.getAuthorities()
+				);
+				authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+				SecurityContextHolder.getContext().setAuthentication(authentication);
 			}
 
 			filterChain.doFilter(request, response);
+
 		} catch (JwtException | IllegalArgumentException | UsernameNotFoundException ex) {
 			SecurityContextHolder.clearContext();
 			authenticationEntryPoint.commence(
 				request,
 				response,
-				new BadCredentialsException("Invalid authentication token", ex)
+				new BadCredentialsException("Invalid or expired authentication token", ex)
 			);
 		}
 	}
