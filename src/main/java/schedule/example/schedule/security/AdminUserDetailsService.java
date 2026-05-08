@@ -34,14 +34,27 @@ public class AdminUserDetailsService implements UserDetailsService {
 	 * @param username the admin email address (used as JWT subject)
 	 */
 	@Override
-	@Cacheable(value = CacheConfig.CACHE_USER_DETAILS, key = "#username.toLowerCase()")
+//	@Cacheable(value = CacheConfig.CACHE_USER_DETAILS, key = "#username.toLowerCase()")
 	public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
 		return adminUserRepository.findByEmailIgnoreCase(username)
-			.map(admin -> User.builder()
-				.username(admin.getEmail())
-				.password(admin.getPasswordHash())
-				.roles("ADMIN")
-				.build())
+			.map(admin -> {
+				// Guard: a row with a null or empty password_hash means the account was never
+				// fully initialised (e.g. created before DataInitializer ran, or a failed save).
+				// Treat it as "not found" so Spring Security converts it to BadCredentialsException
+				// instead of letting BCryptPasswordEncoder log "Empty encoded password" and silently
+				// returning false, which produces a confusing 401 with no actionable stack trace.
+				if (admin.getPasswordHash() == null || admin.getPasswordHash().isBlank()) {
+					throw new UsernameNotFoundException(
+						"Admin account exists for email '" + admin.getEmail() +
+						"' but has no password hash — restart the server so DataInitializer can sync it."
+					);
+				}
+				return User.builder()
+					.username(admin.getEmail())
+					.password(admin.getPasswordHash())
+					.roles("ADMIN")
+					.build();
+			})
 			.orElseThrow(() -> new UsernameNotFoundException(
 				"No admin account found for email: " + username));
 	}
@@ -50,8 +63,18 @@ public class AdminUserDetailsService implements UserDetailsService {
 	 * Evicts the cached user details for the given email.
 	 * Call this whenever an admin's password or account status changes.
 	 */
-	@CacheEvict(value = CacheConfig.CACHE_USER_DETAILS, key = "#email.toLowerCase()")
+//	@CacheEvict(value = CacheConfig.CACHE_USER_DETAILS, key = "#email.toLowerCase()")
 	public void evictUserCache(String email) {
+		// Spring AOP handles the cache eviction — no body needed.
+	}
+
+	/**
+	 * Evicts ALL cached user details (entire cache).
+	 * Call this when orphaned/ghost rows are removed so stale null-password entries
+	 * cannot survive in cache and cause "Empty encoded password" on the next login attempt.
+	 */
+//	@CacheEvict(value = CacheConfig.CACHE_USER_DETAILS, allEntries = true)
+	public void evictAllUserCache() {
 		// Spring AOP handles the cache eviction — no body needed.
 	}
 }
