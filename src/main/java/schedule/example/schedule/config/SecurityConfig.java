@@ -65,8 +65,8 @@ public class SecurityConfig {
 				.authenticationEntryPoint(restAuthenticationEntryPoint)
 				.accessDeniedHandler(restAccessDeniedHandler))
 			.authorizeHttpRequests(authorize -> authorize
-				// Public auth endpoint only — H2 console removed (never expose in production)
-				.requestMatchers("/api/auth/login").permitAll()
+				// Public auth endpoints — login + deployment diagnostic
+				.requestMatchers("/api/auth/login", "/api/auth/admin-check").permitAll()
 				// Actuator health & info are publicly readable; all others require auth
 				.requestMatchers("/actuator/health", "/actuator/info").permitAll()
 				.requestMatchers("/actuator/**").hasRole("ADMIN")

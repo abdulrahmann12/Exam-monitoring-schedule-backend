@@ -54,8 +54,10 @@ public class DataInitializer implements ApplicationRunner {
 		);
 		String normalizedEmail = bootstrapEmail.trim().toLowerCase(Locale.ROOT);
 
+		boolean[] isNew = {false};
 		AdminUser adminUser = adminUserRepository.findByEmailIgnoreCase(normalizedEmail)
 			.orElseGet(() -> {
+				isNew[0] = true;
 				AdminUser newAdmin = new AdminUser();
 				newAdmin.setEmail(normalizedEmail);
 				return newAdmin;
@@ -67,7 +69,16 @@ public class DataInitializer implements ApplicationRunner {
 
 		// Evict any stale cached UserDetails so the new password hash is used immediately.
 		adminUserDetailsService.evictUserCache(normalizedEmail);
-		LOGGER.info("Bootstrap admin account synced for: {}", normalizedEmail);
+
+		// Use WARN so this critical startup event is visible even when root level is WARN.
+		if (isNew[0]) {
+			LOGGER.warn("[BOOTSTRAP] Admin account CREATED for email='{}'. " +
+				"Source: env var BOOTSTRAP_ADMIN_EMAIL or default in application.properties.", normalizedEmail);
+		} else {
+			LOGGER.warn("[BOOTSTRAP] Admin account password SYNCED for email='{}'. " +
+				"If login still fails, verify the BOOTSTRAP_ADMIN_EMAIL env var matches this email " +
+				"and that BOOTSTRAP_ADMIN_PASSWORD matches the password you are using.", normalizedEmail);
+		}
 
 		if (!settingsRepository.existsById(ApplicationDefaults.DEFAULT_SETTINGS_ID)) {
 			Settings settings = new Settings();
