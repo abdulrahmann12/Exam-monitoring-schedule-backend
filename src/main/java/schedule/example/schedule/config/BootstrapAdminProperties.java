@@ -7,4 +7,5 @@ public record BootstrapAdminProperties(
 	String email,
 	String password
 ) {
+
 }
