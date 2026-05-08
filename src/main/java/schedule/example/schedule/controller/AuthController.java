@@ -42,7 +42,6 @@ public class AuthController {
 		return new MeResponse(userDetails.getUsername(), userDetails.getAuthorities()
 				.stream().map(GrantedAuthority::getAuthority).toList());
 	}
-
 	/**
 	 * Diagnostic endpoint — returns the admin email that this deployment was bootstrapped with.
 	 * Safe to expose publicly: reveals only the configured email address, never a password.
