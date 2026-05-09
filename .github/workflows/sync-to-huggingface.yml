@@ -1,0 +1,36 @@
+name: Sync to Hugging Face hub
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hf-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+          persist-credentials: false
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ vars.HF_USERNAME }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          test -n "$HF_TOKEN"    || { echo "ERROR: Missing secret HF_TOKEN";    exit 1; }
+          test -n "$HF_USERNAME" || { echo "ERROR: Missing variable HF_USERNAME"; exit 1; }
+          test -n "$HF_SPACE"    || { echo "ERROR: Missing variable HF_SPACE";    exit 1; }
+
+          echo "Syncing $(git rev-parse HEAD) to https://huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE}"
+
+          git remote remove huggingface 2>/dev/null || true
+          git remote add huggingface "https://${HF_USERNAME}:${HF_TOKEN}@huggingface.co/spaces/${HF_USERNAME}/${HF_SPACE}"
+          git push --force huggingface HEAD:main
