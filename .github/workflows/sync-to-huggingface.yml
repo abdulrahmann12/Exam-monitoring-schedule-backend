@@ -65,9 +65,6 @@ jobs:
           echo "Syncing commit $(git rev-parse --short HEAD) to Hugging Face Space ${HF_SPACE_REPO_ID}"
 
           if ! GIT_TERMINAL_PROMPT=0 git push --force huggingface HEAD:main; then
-            cleanup_credentials
             echo "Failed to sync to Hugging Face. Check HF_TOKEN permissions and HF_SPACE_REPO_ID."
             exit 1
           fi
-
-          cleanup_credentials
