@@ -1,0 +1,49 @@
+name: Sync to Hugging Face
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-to-huggingface-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate required configuration
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO_ID: ${{ vars.HF_SPACE_REPO_ID }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "Missing GitHub Actions secret: HF_TOKEN"
+            exit 1
+          fi
+
+          if [ -z "$HF_SPACE_REPO_ID" ]; then
+            echo "Missing GitHub Actions variable: HF_SPACE_REPO_ID"
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push repository to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_REPO_ID: ${{ vars.HF_SPACE_REPO_ID }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add huggingface "https://oauth2:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE_REPO_ID}"
+          git push --force huggingface HEAD:main

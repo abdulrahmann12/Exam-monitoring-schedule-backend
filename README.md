@@ -36,6 +36,31 @@ Built with Java 23, Spring Security (JWT), JPA/Hibernate, and MySQL.
 
 This Space uses the **Docker** SDK. The application starts on port **7860**.
 
+### Automatic GitHub → Hugging Face sync
+
+This repository now includes a GitHub Actions workflow at
+`.github/workflows/sync-to-huggingface.yml` that pushes the current `main` branch to your
+Hugging Face Space on every push.
+
+Configure these in your GitHub repository before relying on auto-sync:
+
+| Location | Name | Value |
+|----------|------|-------|
+| GitHub Actions secret | `HF_TOKEN` | A Hugging Face write token that can update the target Space |
+| GitHub Actions variable | `HF_SPACE_REPO_ID` | The Space repository id, for example `your-user/your-space-name` |
+
+After adding them:
+
+1. Push changes to `main`.
+2. Open the **Actions** tab in GitHub.
+3. Confirm the **Sync to Hugging Face** workflow completed successfully.
+
+For a permanent setup, keep GitHub as the deployment source of truth:
+
+- Do not force-push or rewrite `main`.
+- Turn on branch protection for `main` and block force pushes.
+- Keep `.github/workflows/sync-to-huggingface.yml` in every branch that will merge into `main`.
+
 ### Required Secrets
 
 Set the following as **Repository Secrets** in your Space settings  
