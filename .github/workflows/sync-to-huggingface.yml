@@ -60,6 +60,7 @@ jobs:
               echo "Warning: failed to delete temporary Hugging Face credentials"
             fi
           }
+          trap cleanup_credentials EXIT
 
           echo "Syncing commit $(git rev-parse --short HEAD) to Hugging Face Space ${HF_SPACE_REPO_ID}"
 
