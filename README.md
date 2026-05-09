@@ -57,9 +57,10 @@ After adding them:
 
 For a permanent setup, keep GitHub as the deployment source of truth:
 
-- Do not force-push or rewrite `main`.
+- Do not force-push or rewrite `main` yourself.
 - Turn on branch protection for `main` and block force pushes.
-- Keep `.github/workflows/sync-to-huggingface.yml` in every branch that will merge into `main`.
+- Keep `.github/workflows/sync-to-huggingface.yml` on `main`, because pushes to `main` are what trigger the sync.
+- The workflow force-pushes only to the Hugging Face Space so the Space exactly matches the current GitHub `main` branch.
 
 ### Required Secrets
 
