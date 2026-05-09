@@ -41,7 +41,6 @@ public class CacheConfig {
     /** Cache name for application settings (SettingsService). */
     public static final String CACHE_SETTINGS = "settings";
 
-
     @Bean
     public CacheManager cacheManager() {
         // User details: TTL 5 minutes, small max size (admin users are few)
