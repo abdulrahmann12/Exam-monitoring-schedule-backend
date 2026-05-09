@@ -43,16 +43,21 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_REPO_ID: ${{ vars.HF_SPACE_REPO_ID }}
         run: |
+          CREDENTIAL_FILE="$RUNNER_TEMP/hf-git-credentials"
+          umask 077
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config credential.helper "cache --timeout=60"
+          git config credential.helper "store --file=$CREDENTIAL_FILE"
           git remote add huggingface "https://huggingface.co/spaces/${HF_SPACE_REPO_ID}"
 
-          printf 'protocol=https\nhost=huggingface.co\nusername=oauth2\npassword=%s\n\n' "$HF_TOKEN" | git credential approve
+          cat <<EOF > "$CREDENTIAL_FILE"
+          https://oauth2:${HF_TOKEN}@huggingface.co
+          EOF
 
           cleanup_credentials() {
-            if ! printf 'protocol=https\nhost=huggingface.co\nusername=oauth2\n\n' | git credential reject; then
-              echo "Warning: failed to clear cached Hugging Face credentials"
+            if ! rm -f "$CREDENTIAL_FILE"; then
+              echo "Warning: failed to delete temporary Hugging Face credentials"
             fi
           }
 
