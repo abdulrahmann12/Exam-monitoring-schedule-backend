@@ -57,7 +57,7 @@ After adding them:
 
 For a permanent setup, keep GitHub as the deployment source of truth:
 
-- Do not force-push or rewrite the GitHub `main` branch yourself.
+- Do not manually force-push or rewrite the GitHub `main` branch; only the workflow force-pushes the Hugging Face remote.
 - Turn on branch protection for `main` and block force pushes.
 - Keep `.github/workflows/sync-to-huggingface.yml` on `main`, because pushes to `main` are what trigger the sync.
 - The workflow force-pushes only to the Hugging Face Space so the Space exactly matches the current GitHub `main` branch.
