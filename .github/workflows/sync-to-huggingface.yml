@@ -56,6 +56,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git remote add huggingface "https://huggingface.co/spaces/${HF_SPACE_REPO_ID}"
+          echo "Syncing commit $(git rev-parse --short HEAD) to Hugging Face Space ${HF_SPACE_REPO_ID}"
 
           if ! GIT_ASKPASS="$RUNNER_TEMP/hf-askpass.sh" GIT_TERMINAL_PROMPT=0 git push --force huggingface HEAD:main; then
             echo "Failed to sync to Hugging Face. Check HF_TOKEN permissions and HF_SPACE_REPO_ID."
