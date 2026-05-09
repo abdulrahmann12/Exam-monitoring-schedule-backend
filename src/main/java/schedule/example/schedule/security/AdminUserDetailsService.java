@@ -34,7 +34,6 @@ public class AdminUserDetailsService implements UserDetailsService {
 	 * @param username the admin email address (used as JWT subject)
 	 */
 	@Override
-//	@Cacheable(value = CacheConfig.CACHE_USER_DETAILS, key = "#username.toLowerCase()")
 	public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
 		return adminUserRepository.findByEmailIgnoreCase(username)
 			.map(admin -> {
@@ -63,7 +62,6 @@ public class AdminUserDetailsService implements UserDetailsService {
 	 * Evicts the cached user details for the given email.
 	 * Call this whenever an admin's password or account status changes.
 	 */
-//	@CacheEvict(value = CacheConfig.CACHE_USER_DETAILS, key = "#email.toLowerCase()")
 	public void evictUserCache(String email) {
 		// Spring AOP handles the cache eviction — no body needed.
 	}
@@ -73,7 +71,6 @@ public class AdminUserDetailsService implements UserDetailsService {
 	 * Call this when orphaned/ghost rows are removed so stale null-password entries
 	 * cannot survive in cache and cause "Empty encoded password" on the next login attempt.
 	 */
-//	@CacheEvict(value = CacheConfig.CACHE_USER_DETAILS, allEntries = true)
 	public void evictAllUserCache() {
 		// Spring AOP handles the cache eviction — no body needed.
 	}
