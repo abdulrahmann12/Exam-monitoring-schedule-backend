@@ -43,22 +43,17 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_REPO_ID: ${{ vars.HF_SPACE_REPO_ID }}
         run: |
-          cat <<'EOF' > "$RUNNER_TEMP/hf-askpass.sh"
-          #!/bin/sh
-          case "$1" in
-            *Username*) echo "oauth2" ;;
-            *Password*) echo "$HF_TOKEN" ;;
-            *) echo "" ;;
-          esac
-          EOF
-
-          chmod 700 "$RUNNER_TEMP/hf-askpass.sh"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config credential.helper "cache --timeout=300"
           git remote add huggingface "https://huggingface.co/spaces/${HF_SPACE_REPO_ID}"
+
+          printf 'protocol=https\nhost=huggingface.co\nusername=oauth2\npassword=%s\n\n' "$HF_TOKEN" | git credential approve
+          trap 'printf "protocol=https\nhost=huggingface.co\nusername=oauth2\n\n" | git credential reject >/dev/null 2>&1 || true' EXIT
+
           echo "Syncing commit $(git rev-parse --short HEAD) to Hugging Face Space ${HF_SPACE_REPO_ID}"
 
-          if ! GIT_ASKPASS="$RUNNER_TEMP/hf-askpass.sh" GIT_TERMINAL_PROMPT=0 git push --force huggingface HEAD:main; then
+          if ! GIT_TERMINAL_PROMPT=0 git push --force huggingface HEAD:main; then
             echo "Failed to sync to Hugging Face. Check HF_TOKEN permissions and HF_SPACE_REPO_ID."
             exit 1
           fi
