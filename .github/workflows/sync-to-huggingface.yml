@@ -46,6 +46,15 @@ jobs:
           umask 077
           CREDENTIAL_FILE="$RUNNER_TEMP/hf-git-credentials"
 
+          case "$HF_SPACE_REPO_ID" in
+            [A-Za-z0-9._-]*/[A-Za-z0-9._-]* ) ;;
+            * )
+              echo "HF_SPACE_REPO_ID must match owner/space-name"
+              exit 1
+              ;;
+          esac
+
+          echo "::add-mask::$HF_TOKEN"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config credential.helper "store --file=$CREDENTIAL_FILE"
