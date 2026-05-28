@@ -8,6 +8,10 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -20,6 +24,10 @@ import java.util.UUID;
  * A reusable slot template (e.g. "Morning Session 08:00–11:00").
  * It has NO exam date — the date lives on RoomAssignment.examDate.
  */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Entity
 @EntityListeners(AuditingEntityListener.class)
 @Table(
@@ -46,9 +54,11 @@ public class TimeSlot {
         private LocalTime endTime;
 
         /** Controls ordering in UI lists */
+        @Builder.Default
         @Column(name = "sort_order", nullable = false)
         private int sortOrder = 0;
 
+        @Builder.Default
         @Column(nullable = false)
         private boolean active = true;
 
@@ -59,28 +69,4 @@ public class TimeSlot {
         @LastModifiedDate
         @Column(nullable = false)
         private Instant updatedAt;
-
-        public TimeSlot() {
-        }
-
-        public UUID getId() { return id; }
-        public void setId(UUID id) { this.id = id; }
-
-        public String getLabel() { return label; }
-        public void setLabel(String label) { this.label = label; }
-
-        public LocalTime getStartTime() { return startTime; }
-        public void setStartTime(LocalTime startTime) { this.startTime = startTime; }
-
-        public LocalTime getEndTime() { return endTime; }
-        public void setEndTime(LocalTime endTime) { this.endTime = endTime; }
-
-        public int getSortOrder() { return sortOrder; }
-        public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
-
-        public boolean isActive() { return active; }
-        public void setActive(boolean active) { this.active = active; }
-
-        public Instant getCreatedAt() { return createdAt; }
-        public Instant getUpdatedAt() { return updatedAt; }
 }

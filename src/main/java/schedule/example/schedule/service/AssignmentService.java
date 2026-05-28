@@ -59,6 +59,7 @@ public class AssignmentService {
     private final TimeSlotRepository timeSlotRepository;
     private final PersonRepository personRepository;
     private final RoomAssignmentMapper roomAssignmentMapper;
+    private final DemoModeService demoModeService;
 
 
     public PageResponse<RoomAssignmentResponse> getAssignments(
@@ -102,6 +103,7 @@ public class AssignmentService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public List<RoomAssignmentResponse> saveAssignmentsBulk(List<BulkRoomAssignmentRequest> requests) {
+        demoModeService.rejectIfDemoUser("bulk-save-assignments");
         if (requests == null || requests.isEmpty()) {
             throw new ValidationException(Messages.ASSIGNMENT_BULK_EMPTY);
         }
@@ -155,6 +157,7 @@ public class AssignmentService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void deleteAssignment(UUID id) {
+        demoModeService.rejectIfDemoUser("delete-assignment");
         RoomAssignment assignment = getDetailedAssignment(id);
         Map<UUID, Integer> previousOccurrences = countAssignmentOccurrences(assignment);
         roomAssignmentRepository.delete(assignment);

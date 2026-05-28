@@ -14,6 +14,9 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.orm.jpa.JpaSystemException;
 
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.common.ApiErrorResponse;
@@ -26,51 +29,18 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * Production-grade centralized exception handler for the entire REST API surface.
- *
- * <h2>Design principles</h2>
- * <ul>
- *   <li><strong>No stack trace leakage</strong> — the {@code Exception} catch-all logs
- *       the full trace server-side but returns only a generic user-facing message.</li>
- *   <li><strong>No null leakage</strong> — every message extraction is guarded via
- *       {@link #safeMessage(Exception)} so that a {@code null} exception message never
- *       reaches the JSON response.</li>
- *   <li><strong>Single {@code buildErrorResponse} helper</strong> — all handlers
- *       delegate to one overloaded method. HTTP status, message, path and timestamp
- *       are always populated; {@code validationErrors} defaults to an empty list.</li>
- *   <li><strong>Multi-exception grouping</strong> — semantically equivalent exceptions
- *       share a single {@code @ExceptionHandler} method rather than duplicating logic.</li>
- *   <li><strong>Dynamic status resolution for external services</strong> — the Python
- *       scheduling service error code is translated to an HTTP status via
- *       {@link #resolveHttpStatusForPythonError(String)} instead of hard-coding
- *       conditions in individual methods.</li>
- * </ul>
- *
- * <h2>Extending this handler</h2>
- * <ol>
- *   <li>Add a message constant to {@link schedule.example.schedule.config.Messages}.</li>
- *   <li>Create a typed {@link RuntimeException} subclass in this package.</li>
- *   <li>Add an {@code @ExceptionHandler} method here (or include the new type in an
- *       existing multi-exception handler if the HTTP status is the same).</li>
- * </ol>
- *
- * <h2>Note on Spring Security exceptions</h2>
- * {@link AuthenticationException} and {@link AccessDeniedException} are normally
- * intercepted by {@link schedule.example.schedule.security.RestAuthenticationEntryPoint}
- * and {@link schedule.example.schedule.security.RestAccessDeniedHandler} respectively,
- * before reaching this advice. The handlers below serve as a safety net for cases where
- * these exceptions escape the filter chain (e.g. thrown programmatically from a service
- * inside a controller method).
+ * Centralized REST exception handler.
+ * - Stack traces are logged server-side only; clients receive generic messages.
+ * - All handlers delegate to buildErrorResponse() for a consistent response envelope.
+ * - AuthenticationException/AccessDeniedException are caught here as a safety net;
+ *   normally they are handled by RestAuthenticationEntryPoint/RestAccessDeniedHandler.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
 	private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-	/**
-	 * Static mapping from Python service error codes to HTTP statuses.
-	 * Defined once at class-load time; zero allocation, O(1) lookup.
-	 */
+	/** Maps Python service error codes to HTTP statuses. Initialized once at class-load. */
 	private static final Map<String, HttpStatus> PYTHON_ERROR_CODE_STATUS_MAP = Map.ofEntries(
 		Map.entry("PYTHON_400", HttpStatus.BAD_REQUEST),
 		Map.entry("PYTHON_401", HttpStatus.UNAUTHORIZED),
@@ -85,14 +55,9 @@ public class GlobalExceptionHandler {
 		Map.entry("PYTHON_504", HttpStatus.GATEWAY_TIMEOUT)
 	);
 
-	// =========================================================================
-	// 404 NOT FOUND
-	// =========================================================================
+	// ── 404 NOT FOUND ─────────────────────────────────────────────────────────
 
-	/**
-	 * Handles all resource-not-found exceptions. Multiple types share this handler
-	 * because they all map to 404 with a pre-formatted message.
-	 */
+	/** Handles resource-not-found exceptions. */
 	@ExceptionHandler({
 		NotFoundException.class,
 		ExamNotFoundException.class,
@@ -102,32 +67,18 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.NOT_FOUND, safeMessage(ex), request);
 	}
 
-	// =========================================================================
-	// 409 CONFLICT
-	// =========================================================================
+	// ── 409 CONFLICT ──────────────────────────────────────────────────────────
 
-	/**
-	 * Handles duplicate-resource and conflict exceptions. Both signal a state
-	 * collision and must return 409 — grouping them avoids duplication.
-	 */
+	/** Handles duplicate-resource and state-collision exceptions. */
 	@ExceptionHandler({ConflictException.class, DuplicateResourceException.class})
 	public ResponseEntity<ApiErrorResponse> handleConflict(RuntimeException ex, HttpServletRequest request) {
 		return buildErrorResponse(HttpStatus.CONFLICT, safeMessage(ex), request);
 	}
 
-	// =========================================================================
-	// 400 BAD REQUEST — simple (no per-field breakdown)
-	// =========================================================================
 
-	/**
-	 * Handles simple bad-request scenarios that do not produce per-field error lists.
-	 *
-	 * <ul>
-	 *   <li>{@link ValidationException} — domain-level format/value rejection</li>
-	 *   <li>{@link MethodArgumentTypeMismatchException} — path/query param type mismatch</li>
-	 *   <li>{@link ConstraintViolationException} — {@code @Validated} method parameter violations</li>
-	 * </ul>
-	 */
+	// ── 400 BAD REQUEST ───────────────────────────────────────────────────────
+
+	/** Handles simple validation failures without per-field breakdown. */
 	@ExceptionHandler({
 		ValidationException.class,
 		MethodArgumentTypeMismatchException.class,
@@ -137,17 +88,9 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.BAD_REQUEST, badRequestMessage(ex), request);
 	}
 
-	// =========================================================================
-	// 400 BAD REQUEST — JSON parse error
-	// =========================================================================
+	// ── 400 BAD REQUEST — JSON parse error ────────────────────────────────────
 
-	/**
-	 * Handles malformed or unreadable JSON request bodies.
-	 *
-	 * <p>The underlying cause is intentionally not forwarded to the client to avoid
-	 * leaking Jackson internals. A short, user-friendly message is returned instead,
-	 * while the cause is logged at DEBUG level to aid development.
-	 */
+	/** Handles malformed JSON bodies. Returns a user-friendly message without leaking Jackson internals. */
 	@ExceptionHandler(HttpMessageNotReadableException.class)
 	public ResponseEntity<ApiErrorResponse> handleJsonParseError(
 		HttpMessageNotReadableException ex,
@@ -158,15 +101,9 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.BAD_REQUEST, Messages.HTTP_JSON_PARSE_ERROR, request);
 	}
 
-	// =========================================================================
-	// 400 BAD REQUEST — bean validation (with per-field breakdown)
-	// =========================================================================
+	// ── 400 BAD REQUEST — bean validation ─────────────────────────────────────
 
-	/**
-	 * Handles {@code @Valid} / {@code @Validated} failures on request body DTOs.
-	 * Produces a structured list of {@link FieldValidationError}s so clients can
-	 * highlight individual form fields.
-	 */
+	/** Handles @Valid/@Validated DTO failures. Returns a per-field error list for the client. */
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<ApiErrorResponse> handleMethodArgumentNotValid(
 		MethodArgumentNotValidException ex,
@@ -182,14 +119,9 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.BAD_REQUEST, Messages.VALIDATION_FAILED, request, fieldErrors);
 	}
 
-	// =========================================================================
-	// 405 METHOD NOT ALLOWED
-	// =========================================================================
+	// ── 405 METHOD NOT ALLOWED ────────────────────────────────────────────────
 
-	/**
-	 * Handles requests that use an HTTP method not supported by the matched endpoint
-	 * (e.g. DELETE on a read-only resource).
-	 */
+	/** Handles requests using an HTTP method not supported by the endpoint. */
 	@ExceptionHandler(HttpRequestMethodNotSupportedException.class)
 	public ResponseEntity<ApiErrorResponse> handleMethodNotSupported(
 		HttpRequestMethodNotSupportedException ex,
@@ -200,56 +132,36 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.METHOD_NOT_ALLOWED, Messages.HTTP_METHOD_NOT_SUPPORTED, request);
 	}
 
-	// =========================================================================
-	// 401 UNAUTHORIZED — authentication & token failures
-	// =========================================================================
+	// ── 401 UNAUTHORIZED ──────────────────────────────────────────────────────
 
-	/**
-	 * Handles authentication failures that escape the Spring Security filter chain
-	 * and token-level validation exceptions thrown from service/controller code.
-	 *
-	 * <ul>
-	 *   <li>{@link AuthenticationException} — Spring Security authentication failure</li>
-	 *   <li>{@link InvalidTokenException} — custom typed token-validation failure</li>
-	 * </ul>
-	 */
+	/** Handles authentication and token validation failures. */
 	@ExceptionHandler({AuthenticationException.class, InvalidTokenException.class})
 	public ResponseEntity<ApiErrorResponse> handleAuthentication(Exception ex, HttpServletRequest request) {
 		return buildErrorResponse(HttpStatus.UNAUTHORIZED, safeMessage(ex), request);
 	}
 
-	// =========================================================================
-	// 403 FORBIDDEN — authorization failures
-	// =========================================================================
+	// ── 403 FORBIDDEN ─────────────────────────────────────────────────────────
 
-	/**
-	 * Handles authorization rejections that fall through to the controller layer.
-	 *
-	 * <ul>
-	 *   <li>{@link AccessDeniedException} — Spring Security role/authority check</li>
-	 *   <li>{@link UnauthorizedException} — business-domain access control</li>
-	 * </ul>
-	 */
+	/** Handles authorization rejections from Spring Security or domain access control. */
 	@ExceptionHandler({AccessDeniedException.class, UnauthorizedException.class})
 	public ResponseEntity<ApiErrorResponse> handleForbidden(Exception ex, HttpServletRequest request) {
 		return buildErrorResponse(HttpStatus.FORBIDDEN, safeMessage(ex), request);
 	}
 
-	// =========================================================================
-	// 422 UNPROCESSABLE ENTITY — business rule violations
-	// =========================================================================
+	// ── 403 FORBIDDEN — demo mode ─────────────────────────────────────────────
 
-	/**
-	 * Handles semantically invalid operations that pass structural validation but
-	 * violate domain business rules. 422 is preferred over 400 here because the
-	 * request is well-formed; the server simply cannot process it in the current state.
-	 *
-	 * <ul>
-	 *   <li>{@link BusinessRuleViolationException} — generic rule violation</li>
-	 *   <li>{@link InvalidExamTimeException} — exam time ordering/range violation</li>
-	 *   <li>{@link InvigilatorUnavailableException} — personnel availability conflict</li>
-	 * </ul>
-	 */
+	/** Handles operations blocked for the demo account. */
+	@ExceptionHandler(DemoOperationNotAllowedException.class)
+	public ResponseEntity<ApiErrorResponse> handleDemoOperationNotAllowed(
+		DemoOperationNotAllowedException ex,
+		HttpServletRequest request
+	) {
+		return buildErrorResponse(HttpStatus.FORBIDDEN, safeMessage(ex), request);
+	}
+
+	// ── 422 UNPROCESSABLE ENTITY ──────────────────────────────────────────────
+
+	/** Handles well-formed requests that violate domain business rules. */
 	@ExceptionHandler({
 		BusinessRuleViolationException.class,
 		InvalidExamTimeException.class,
@@ -262,15 +174,9 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.UNPROCESSABLE_ENTITY, safeMessage(ex), request);
 	}
 
-	// =========================================================================
-	// 429 TOO MANY REQUESTS — rate limiting
-	// =========================================================================
+	// ── 429 TOO MANY REQUESTS ─────────────────────────────────────────────────
 
-	/**
-	 * Handles service-layer rate-limit violations. The {@code Retry-After} header is
-	 * not set here because the retry delay is context-dependent; callers that need it
-	 * should extend this handler or use a {@link org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice}.
-	 */
+	/** Handles service-layer rate-limit violations. */
 	@ExceptionHandler(RateLimitExceededException.class)
 	public ResponseEntity<ApiErrorResponse> handleRateLimitExceeded(
 		RateLimitExceededException ex,
@@ -279,21 +185,9 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.TOO_MANY_REQUESTS, safeMessage(ex), request);
 	}
 
-	// =========================================================================
-	// DYNAMIC STATUS — external Python scheduling service
-	// =========================================================================
+	// ── DYNAMIC STATUS — Python scheduling service ────────────────────────────
 
-	/**
-	 * Handles all failures originating from the external Python scheduling micro-service.
-	 *
-	 * <p>The HTTP status is resolved dynamically from the exception's {@code errorCode}
-	 * field using {@link #resolveHttpStatusForPythonError(String)} rather than
-	 * hard-coding status checks here. This keeps the handler clean regardless of how
-	 * many error codes the service introduces in the future.
-	 *
-	 * <p>Errors are logged at WARN because they indicate a dependency issue rather than
-	 * a programming error in this service.
-	 */
+	/** Translates Python service error codes to HTTP statuses and logs at WARN. */
 	@ExceptionHandler(PythonServiceException.class)
 	public ResponseEntity<ApiErrorResponse> handlePythonServiceException(
 		PythonServiceException ex,
@@ -305,35 +199,41 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(status, safeMessage(ex), request);
 	}
 
-	// =========================================================================
-	// 500 INTERNAL SERVER ERROR — catch-all
-	// =========================================================================
+	// ── 500 INTERNAL SERVER ERROR ─────────────────────────────────────────────
 
-	/**
-	 * Safety-net handler for any exception not matched by a more specific handler above.
-	 *
-	 * <p><strong>Security:</strong> the full stack trace is logged server-side but
-	 * only a generic, non-revealing message is returned to the caller. This prevents
-	 * accidental disclosure of internal class names, SQL, or file paths.
-	 */
+	/** Catch-all handler. Logs full trace server-side; returns a generic message to the client. */
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ApiErrorResponse> handleUnexpected(Exception ex, HttpServletRequest request) {
 		log.error("Unhandled exception for {} {}", request.getMethod(), request.getRequestURI(), ex);
 		return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, Messages.GENERAL_UNEXPECTED_ERROR, request);
 	}
 
-	// =========================================================================
-	// HELPER METHODS
-	// =========================================================================
+	// ── 503 SERVICE UNAVAILABLE — database connectivity ───────────────────────
 
 	/**
-	 * Builds an {@link ApiErrorResponse} without per-field validation errors.
-	 *
-	 * @param status  the HTTP status to return
-	 * @param message the user-facing error message
-	 * @param request the current servlet request (for path extraction)
-	 * @return a fully-populated response entity
+	 * Handles database connectivity failures (server down, pool exhaustion, JPA system errors).
+	 * All map to 503 because the request is valid but the database is unreachable.
 	 */
+	@ExceptionHandler({
+		DataAccessResourceFailureException.class,
+		TransientDataAccessException.class,
+		JpaSystemException.class
+	})
+	public ResponseEntity<ApiErrorResponse> handleDatabaseConnectivityFailure(
+			Exception ex,
+			HttpServletRequest request
+	) {
+		log.error("Database connectivity failure for {} {}",
+				request.getMethod(),
+				request.getRequestURI(),
+				ex
+		);
+		return buildErrorResponse(HttpStatus.SERVICE_UNAVAILABLE, Messages.DATABASE_UNAVAILABLE, request);
+	}
+
+	// ── Helpers ───────────────────────────────────────────────────────────────
+
+	/** Builds an error response without field errors. */
 	private ResponseEntity<ApiErrorResponse> buildErrorResponse(
 		HttpStatus status,
 		String message,
@@ -342,16 +242,7 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(status, message, request, List.of());
 	}
 
-	/**
-	 * Core response builder. All handler methods must delegate here to guarantee a
-	 * consistent response envelope across the entire API.
-	 *
-	 * @param status           the HTTP status to return
-	 * @param message          the user-facing error message
-	 * @param request          the current servlet request
-	 * @param validationErrors per-field validation errors (empty list when not applicable)
-	 * @return a fully-populated response entity
-	 */
+	/** Core response builder used by all handlers. */
 	private ResponseEntity<ApiErrorResponse> buildErrorResponse(
 		HttpStatus status,
 		String message,
@@ -369,29 +260,19 @@ public class GlobalExceptionHandler {
 		return ResponseEntity.status(status).body(body);
 	}
 
-	/**
-	 * Safely extracts the exception message, substituting a generic fallback when the
-	 * message is {@code null} to prevent {@code "null"} strings in API responses.
-	 *
-	 * @param ex the exception whose message is needed
-	 * @return a non-null, non-empty message string
-	 */
+	/** Returns the exception message, or a fallback if it is null. */
 	private String safeMessage(Exception ex) {
 		return Objects.requireNonNullElse(ex.getMessage(), Messages.GENERAL_UNEXPECTED_ERROR);
 	}
 
 	/**
-	 * Resolves the user-facing message for simple 400 Bad Request scenarios.
-	 *
-	 * <ul>
-	 *   <li>For {@link MethodArgumentTypeMismatchException}: names the offending parameter.</li>
-	 *   <li>For {@link ConstraintViolationException}: concatenates all constraint messages.</li>
-	 *   <li>For everything else: delegates to {@link #safeMessage(Exception)}.</li>
-	 * </ul>
+	 * Resolves a user-facing message for 400 Bad Request cases:
+	 * - Type mismatch: names the offending parameter.
+	 * - Constraint violation: concatenates all violation messages.
+	 * - Other: delegates to safeMessage().
 	 */
 	private String badRequestMessage(Exception ex) {
 		if (ex instanceof MethodArgumentTypeMismatchException mismatch) {
-			// getName() is guaranteed non-null by the Spring framework contract
 			return Messages.VALIDATION_INVALID_PARAMETER.formatted(mismatch.getName());
 		}
 
@@ -405,15 +286,7 @@ public class GlobalExceptionHandler {
 		return safeMessage(ex);
 	}
 
-	/**
-	 * Translates a {@link PythonServiceException} error code to the appropriate HTTP
-	 * status using the static {@link #PYTHON_ERROR_CODE_STATUS_MAP}. Unmapped codes
-	 * fall back to {@code 500 Internal Server Error} to avoid exposing ambiguous
-	 * semantics to callers.
-	 *
-	 * @param errorCode the code carried by {@link PythonServiceException}
-	 * @return the resolved {@link HttpStatus}; never {@code null}
-	 */
+	/** Maps a Python service error code to an HTTP status. Defaults to 500 for unknown codes. */
 	private HttpStatus resolveHttpStatusForPythonError(String errorCode) {
 		if (errorCode == null) {
 			return HttpStatus.INTERNAL_SERVER_ERROR;

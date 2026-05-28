@@ -34,6 +34,7 @@ public class RoomService {
 	private final RoomAssignmentRepository roomAssignmentRepository;
 	private final RoomMapper roomMapper;
 	private final NormalizedNameMaintenanceService normalizedNameMaintenanceService;
+	private final DemoModeService demoModeService;
 
 	public PageResponse<RoomResponse> getRooms(RoomType type, String name, Integer minCapacity, Integer maxCapacity, Pageable pageable) {
 		// Convert name to a prefix pattern on normalizedName to allow B-tree index usage.
@@ -65,6 +66,7 @@ public class RoomService {
 
 	@Transactional
 	public void deleteRoom(UUID id) {
+		demoModeService.rejectIfDemoUser("delete-room");
 		Room room = getRoomEntity(id);
 		if (roomAssignmentRepository.existsByRoomId(id)) {
 			throw new ConflictException(MessageFormat.format(Messages.ROOM_DELETE_IN_USE, room.getName()));

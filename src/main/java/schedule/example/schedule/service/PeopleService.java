@@ -41,6 +41,7 @@ public class PeopleService {
 	private final InvigilatorAssignmentRepository invigilatorAssignmentRepository;
 	private final PersonMapper personMapper;
 	private final NormalizedNameMaintenanceService normalizedNameMaintenanceService;
+	private final DemoModeService demoModeService;
 
 
 	/**
@@ -94,6 +95,7 @@ public class PeopleService {
 
 	@Transactional
 	public void deletePerson(UUID id) {
+		demoModeService.rejectIfDemoUser("delete-person");
 		Person person = getPersonEntity(id);
 
 		if (roomAssignmentRepository.existsByChiefInvigilatorId(id) || invigilatorAssignmentRepository.existsByInvigilatorId(id)) {

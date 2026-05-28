@@ -9,6 +9,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
 import schedule.example.schedule.config.CacheConfig;
+import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.repository.AdminUserRepository;
 
 /**
@@ -51,7 +52,7 @@ public class AdminUserDetailsService implements UserDetailsService {
 				return User.builder()
 					.username(admin.getEmail())
 					.password(admin.getPasswordHash())
-					.roles("ADMIN")
+					.roles(admin.getRole() != null ? admin.getRole().name() : "ADMIN")
 					.build();
 			})
 			.orElseThrow(() -> new UsernameNotFoundException(

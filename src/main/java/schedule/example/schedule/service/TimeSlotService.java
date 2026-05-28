@@ -32,6 +32,7 @@ public class TimeSlotService {
     private final TimeSlotRepository timeSlotRepository;
     private final RoomAssignmentRepository roomAssignmentRepository;
     private final TimeSlotMapper timeSlotMapper;
+    private final DemoModeService demoModeService;
 
     public PageResponse<TimeSlotResponse> getTimeSlots(String label, Boolean activeOnly, Pageable pageable) {
         Page<TimeSlotResponse> page = timeSlotRepository.search(label, activeOnly, pageable)
@@ -56,6 +57,7 @@ public class TimeSlotService {
 
     @Transactional
     public void deleteTimeSlot(UUID id) {
+        demoModeService.rejectIfDemoUser("delete-time-slot");
         TimeSlot timeSlot = getTimeSlotEntity(id);
         if (roomAssignmentRepository.existsByTimeSlotId(id)) {
             throw new ConflictException(MessageFormat.format(Messages.SLOT_DELETE_IN_USE,
@@ -68,6 +70,7 @@ public class TimeSlotService {
     /** Soft-deactivate a slot instead of deleting it when it has assignments. */
     @Transactional
     public TimeSlotResponse deactivateTimeSlot(UUID id) {
+        demoModeService.rejectIfDemoUser("deactivate-time-slot");
         TimeSlot timeSlot = getTimeSlotEntity(id);
         timeSlot.setActive(false);
         return timeSlotMapper.toResponse(timeSlotRepository.save(timeSlot));

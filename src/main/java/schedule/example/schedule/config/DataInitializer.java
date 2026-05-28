@@ -11,11 +11,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.entity.Settings;
+import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.entity.enums.ThemeMode;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.repository.SettingsRepository;
 import schedule.example.schedule.security.AdminUserDetailsService;
 
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.Locale;
 
 @Component
@@ -26,6 +29,7 @@ public class DataInitializer implements ApplicationRunner {
 	private final AdminUserRepository adminUserRepository;
 	private final SettingsRepository settingsRepository;
 	private final BootstrapAdminProperties bootstrapAdminProperties;
+	private final DemoProperties demoProperties;
 	private final PasswordEncoder passwordEncoder;
 	private final AdminUserDetailsService adminUserDetailsService;
 
@@ -33,12 +37,14 @@ public class DataInitializer implements ApplicationRunner {
 		AdminUserRepository adminUserRepository,
 		SettingsRepository settingsRepository,
 		BootstrapAdminProperties bootstrapAdminProperties,
+		DemoProperties demoProperties,
 		PasswordEncoder passwordEncoder,
 		AdminUserDetailsService adminUserDetailsService
 	) {
 		this.adminUserRepository = adminUserRepository;
 		this.settingsRepository = settingsRepository;
 		this.bootstrapAdminProperties = bootstrapAdminProperties;
+		this.demoProperties = demoProperties;
 		this.passwordEncoder = passwordEncoder;
 		this.adminUserDetailsService = adminUserDetailsService;
 	}
@@ -65,11 +71,11 @@ public class DataInitializer implements ApplicationRunner {
 				return newAdmin;
 			});
 
-		// Always sync the password so changing app.bootstrap-admin.password takes effect on restart.
+		// Sync password on every restart so changes to the config take effect immediately.
 		adminUser.setPasswordHash(passwordEncoder.encode(bootstrapPassword));
 		AdminUser saved = adminUserRepository.saveAndFlush(adminUser);
 
-		// Verify the hash was actually persisted — catches silent save failures or mapping bugs.
+		// Fail fast if the hash wasn't persisted — catches mapping or DB constraint issues.
 		if (saved.getPasswordHash() == null || saved.getPasswordHash().isBlank()) {
 			throw new IllegalStateException(
 				"[BOOTSTRAP] FATAL: password_hash was not persisted for admin '" + normalizedEmail +
@@ -77,23 +83,18 @@ public class DataInitializer implements ApplicationRunner {
 			);
 		}
 
-		// Evict any stale cached UserDetails so the new password hash is used immediately.
+		// Evict cached UserDetails so the new password hash is picked up immediately.
 		adminUserDetailsService.evictUserCache(normalizedEmail);
 
-		// Remove any ghost rows (same or different email) that have a null/empty password_hash.
-		// These come from deployments before DataInitializer existed, or from a failed first save.
-		// If a ghost row with the tested email exists, it would be found by loadUserByUsername
-		// and produce "BCryptPasswordEncoder: Empty encoded password" even though the bootstrap
-		// row is correct.
+		// Remove ghost rows with null/empty password_hash left by previous failed deployments.
 		int orphansRemoved = adminUserRepository.deleteOrphanedPasswordlessAccounts(normalizedEmail);
 		if (orphansRemoved > 0) {
-			// Also evict the entire userDetails cache to purge any cached null-password entries.
 			adminUserDetailsService.evictAllUserCache();
 			LOGGER.warn("[BOOTSTRAP] Removed {} orphaned admin row(s) with null/empty password_hash. " +
 				"These were ghost rows from a previous deployment. Login should now work correctly.", orphansRemoved);
 		}
 
-		// Use WARN so this critical startup event is visible even when root level is WARN.
+		// Log at WARN so this event is visible even when root log level is WARN.
 		if (isNew[0]) {
 			LOGGER.warn("[BOOTSTRAP] Admin account CREATED for email='{}'. " +
 				"Source: env var BOOTSTRAP_ADMIN_EMAIL or default in application.properties.", normalizedEmail);
@@ -103,8 +104,14 @@ public class DataInitializer implements ApplicationRunner {
 				"and that BOOTSTRAP_ADMIN_PASSWORD matches the password you are using.", normalizedEmail);
 		}
 
-		if (!settingsRepository.existsById(ApplicationDefaults.DEFAULT_SETTINGS_ID)) {
-			Settings settings = new Settings();
+		// ── Demo account ──────────────────────────────────────────────────────
+		if (demoProperties.enabled()) {
+			seedDemoAccount();
+		} else {
+			LOGGER.warn("[DEMO] Demo mode is disabled (app.demo.enabled=false). Demo account will not be seeded.");
+		}
+
+		if (!settingsRepository.existsById(ApplicationDefaults.DEFAULT_SETTINGS_ID)) {			Settings settings = new Settings();
 			settings.setId(ApplicationDefaults.DEFAULT_SETTINGS_ID);
 			settings.setSystemName("Uni-Guard Schedules");
 			settings.setAppTagline("Exam Invigilation Planning");
@@ -124,5 +131,33 @@ public class DataInitializer implements ApplicationRunner {
 			);
 		}
 		return value;
+	}
+
+	/**
+	 * Seeds the demo account with a random password and DEMO_ADMIN role.
+	 * Idempotent — skips if the account already exists.
+	 * Authentication bypasses password check via DemoAuthService.
+	 */
+	private void seedDemoAccount() {
+		String demoEmail = DemoProperties.DEMO_EMAIL;
+
+		if (adminUserRepository.findByEmailIgnoreCase(demoEmail).isPresent()) {
+			LOGGER.warn("[DEMO] Demo account '{}' already exists — skipping seed.", demoEmail);
+			return;
+		}
+
+		// Generate a random password — never exposed; demo login bypasses it.
+		byte[] randomBytes = new byte[32];
+		new SecureRandom().nextBytes(randomBytes);
+		String randomPassword = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+
+		AdminUser demoUser = new AdminUser();
+		demoUser.setEmail(demoEmail.toLowerCase(Locale.ROOT));
+		demoUser.setPasswordHash(passwordEncoder.encode(randomPassword));
+		demoUser.setRole(AdminRole.DEMO_ADMIN);
+		adminUserRepository.saveAndFlush(demoUser);
+
+		LOGGER.warn("[DEMO] Demo account CREATED for email='{}' with role=DEMO_ADMIN. " +
+			"Use POST /api/auth/demo-login to authenticate as this account.", demoEmail);
 	}
 }

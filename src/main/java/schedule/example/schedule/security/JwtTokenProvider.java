@@ -14,23 +14,15 @@ import java.time.temporal.ChronoUnit;
 import java.util.Date;
 
 /**
- * JWT token provider.
- *
- * <p>Design decisions:
- * <ul>
- *   <li>The {@link SecretKey} is computed <em>once</em> at startup via {@link PostConstruct},
- *       not on every call — avoiding repeated byte-encoding on every request.</li>
- *   <li>{@link #parseAndValidate(String)} performs a single HMAC-SHA256 verification that
- *       both extracts claims AND validates the signature/expiry in one pass. Callers should
- *       not call any secondary validation method after this succeeds.</li>
- * </ul>
+ * JWT token provider. Signs and validates HMAC-SHA256 tokens.
+ * The signing key is built once at startup and reused on every request.
  */
 @Component
 public class JwtTokenProvider {
 
 	private final JwtProperties jwtProperties;
 
-	/** Immutable key computed once at startup. Thread-safe. */
+	/** Signing key built once at startup. Thread-safe. */
 	private SecretKey signingKey;
 
 	public JwtTokenProvider(JwtProperties jwtProperties) {
@@ -62,11 +54,11 @@ public class JwtTokenProvider {
 	}
 
 	/**
-	 * Parses, signature-verifies, and expiry-checks the token in a single JJWT pass.
+	 * Parses the token, verifies signature, and checks expiry in one pass.
 	 *
-	 * @param token the raw JWT string (without "Bearer " prefix)
-	 * @return the validated {@link Claims} payload
-	 * @throws JwtException if the token is malformed, has an invalid signature, or is expired
+	 * @param token raw JWT string (without "Bearer " prefix)
+	 * @return validated Claims payload
+	 * @throws JwtException if the token is malformed, invalid, or expired
 	 */
 	public Claims parseAndValidate(String token) {
 		return Jwts.parser()

@@ -17,6 +17,11 @@ import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.ToString;
 import org.hibernate.annotations.BatchSize;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -30,6 +35,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Entity
 @EntityListeners(AuditingEntityListener.class)
 @Table(
@@ -43,12 +52,7 @@ import java.util.UUID;
                 @Index(name = "idx_room_assignment_time_slot", columnList = "time_slot_id"),
                 @Index(name = "idx_room_assignment_chief", columnList = "chief_invigilator_id"),
                 @Index(name = "idx_room_assignment_locked", columnList = "is_locked"),
-                // Composite indexes for the most common multi-column validation queries.
-                // (time_slot_id, exam_date, chief_invigilator_id) eliminates multi-range scans
-                // when counting chief parallel rooms — called on every assignment save.
                 @Index(name = "idx_ra_slot_date_chief", columnList = "time_slot_id, exam_date, chief_invigilator_id"),
-                // (exam_date, time_slot_id) speeds up bulk schedule loads that filter by
-                // date range + slot — used by findAllDetailedByExamDateInAndTimeSlotIdIn.
                 @Index(name = "idx_ra_date_slot", columnList = "exam_date, time_slot_id")
         }
 )
@@ -58,14 +62,16 @@ public class RoomAssignment {
         @GeneratedValue(strategy = GenerationType.UUID)
         private UUID id;
 
-        /** The concrete exam date for this assignment */
+        /** Exam date for this assignment. */
         @Column(name = "exam_date", nullable = false)
         private LocalDate examDate;
 
+        @ToString.Exclude
         @ManyToOne(fetch = FetchType.LAZY, optional = false)
         @JoinColumn(name = "room_id", nullable = false)
         private Room room;
 
+        @ToString.Exclude
         @ManyToOne(fetch = FetchType.LAZY, optional = false)
         @JoinColumn(name = "time_slot_id", nullable = false)
         private TimeSlot timeSlot;
@@ -76,34 +82,29 @@ public class RoomAssignment {
         @Column(length = 40)
         private String subjectCode;
 
+        @ToString.Exclude
         @ManyToOne(fetch = FetchType.LAZY)
         @JoinColumn(name = "chief_invigilator_id")
         private Person chiefInvigilator;
 
+        @Builder.Default
         @Column(name = "is_locked", nullable = false)
         private boolean locked = false;
 
-        /**
-         * Monotonically increasing version set on each generation run.
-         * Allows the frontend to reset-to-generated using this baseline.
-         */
+        /** Increments on each generation run. */
+        @Builder.Default
         @Column(name = "generation_version", nullable = false)
         private int generationVersion = 0;
 
-        /**
-         * Tracks whether the assignment was generated, manually set, or a mix.
-         * Matches the frontend's origination tracking.
-         */
+        /** Whether the assignment was generated, manually set, or mixed. */
+        @Builder.Default
         @Enumerated(EnumType.STRING)
         @Column(name = "source", nullable = false, length = 16)
         private AssignmentSource source = AssignmentSource.MANUAL;
 
-        /**
-         * @BatchSize(size = 25): if invigilatorAssignments is ever accessed outside an
-         * @EntityGraph fetch, Hibernate batches up to 25 collection loads in a single
-         * IN-clause query instead of firing one SELECT per RoomAssignment. This is a safety
-         * net — all hot paths already use @EntityGraph to eagerly load the collection.
-         */
+        /** Invigilators for this room. Batched to avoid N+1 outside EntityGraph paths. */
+        @ToString.Exclude
+        @Builder.Default
         @BatchSize(size = 25)
         @OneToMany(mappedBy = "roomAssignment", cascade = CascadeType.ALL, orphanRemoval = true)
         @OrderColumn(name = "position_index")
@@ -117,53 +118,16 @@ public class RoomAssignment {
         @Column(nullable = false)
         private Instant updatedAt;
 
-        public RoomAssignment() {
-        }
+        // ── Business utility methods ────────────────────────────────────────────
 
-        public UUID getId() { return id; }
-        public void setId(UUID id) { this.id = id; }
-
-        public LocalDate getExamDate() { return examDate; }
-        public void setExamDate(LocalDate examDate) { this.examDate = examDate; }
-
-        public Room getRoom() { return room; }
-        public void setRoom(Room room) { this.room = room; }
-
-        public TimeSlot getTimeSlot() { return timeSlot; }
-        public void setTimeSlot(TimeSlot timeSlot) { this.timeSlot = timeSlot; }
-
-        public String getSubjectName() { return subjectName; }
-        public void setSubjectName(String subjectName) { this.subjectName = subjectName; }
-
-        public String getSubjectCode() { return subjectCode; }
-        public void setSubjectCode(String subjectCode) { this.subjectCode = subjectCode; }
-
-        public Person getChiefInvigilator() { return chiefInvigilator; }
-        public void setChiefInvigilator(Person chiefInvigilator) { this.chiefInvigilator = chiefInvigilator; }
-
-        public boolean isLocked() { return locked; }
-        public void setLocked(boolean locked) { this.locked = locked; }
-
-        public int getGenerationVersion() { return generationVersion; }
-        public void setGenerationVersion(int generationVersion) { this.generationVersion = generationVersion; }
-
-        public AssignmentSource getSource() { return source; }
-        public void setSource(AssignmentSource source) { this.source = source; }
-
-        public List<InvigilatorAssignment> getInvigilatorAssignments() { return invigilatorAssignments; }
-        public void setInvigilatorAssignments(List<InvigilatorAssignment> invigilatorAssignments) {
-                this.invigilatorAssignments = invigilatorAssignments;
-        }
-
-        public Instant getCreatedAt() { return createdAt; }
-        public Instant getUpdatedAt() { return updatedAt; }
-
+        /** Adds one invigilator and sets back-reference. */
         public void addInvigilatorAssignment(InvigilatorAssignment assignment) {
                 if (assignment == null) return;
                 assignment.setRoomAssignment(this);
                 invigilatorAssignments.add(assignment);
         }
 
+        /** Clears and replaces all invigilator assignments. */
         public void replaceInvigilatorAssignments(List<InvigilatorAssignment> assignments) {
                 invigilatorAssignments.clear();
                 if (assignments == null) return;

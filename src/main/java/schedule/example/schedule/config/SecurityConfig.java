@@ -21,6 +21,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import schedule.example.schedule.security.AdminUserDetailsService;
+import schedule.example.schedule.security.DemoLoginRateLimiterFilter;
 import schedule.example.schedule.security.JwtAuthenticationFilter;
 import schedule.example.schedule.security.LoginRateLimiterFilter;
 import schedule.example.schedule.security.RestAccessDeniedHandler;
@@ -34,6 +35,7 @@ public class SecurityConfig {
 
 	private final JwtAuthenticationFilter jwtAuthenticationFilter;
 	private final LoginRateLimiterFilter loginRateLimiterFilter;
+	private final DemoLoginRateLimiterFilter demoLoginRateLimiterFilter;
 	private final RestAuthenticationEntryPoint restAuthenticationEntryPoint;
 	private final RestAccessDeniedHandler restAccessDeniedHandler;
 	private final AdminUserDetailsService adminUserDetailsService;
@@ -42,6 +44,7 @@ public class SecurityConfig {
 	public SecurityConfig(
 		JwtAuthenticationFilter jwtAuthenticationFilter,
 		LoginRateLimiterFilter loginRateLimiterFilter,
+		DemoLoginRateLimiterFilter demoLoginRateLimiterFilter,
 		RestAuthenticationEntryPoint restAuthenticationEntryPoint,
 		RestAccessDeniedHandler restAccessDeniedHandler,
 		AdminUserDetailsService adminUserDetailsService,
@@ -49,6 +52,7 @@ public class SecurityConfig {
 	) {
 		this.jwtAuthenticationFilter = jwtAuthenticationFilter;
 		this.loginRateLimiterFilter = loginRateLimiterFilter;
+		this.demoLoginRateLimiterFilter = demoLoginRateLimiterFilter;
 		this.restAuthenticationEntryPoint = restAuthenticationEntryPoint;
 		this.restAccessDeniedHandler = restAccessDeniedHandler;
 		this.adminUserDetailsService = adminUserDetailsService;
@@ -65,8 +69,8 @@ public class SecurityConfig {
 				.authenticationEntryPoint(restAuthenticationEntryPoint)
 				.accessDeniedHandler(restAccessDeniedHandler))
 			.authorizeHttpRequests(authorize -> authorize
-				// Public auth endpoints — login + deployment diagnostic
-				.requestMatchers("/api/auth/login", "/api/auth/admin-check").permitAll()
+				// Public auth endpoints — login + demo-login + deployment diagnostic
+				.requestMatchers("/api/auth/login", "/api/auth/demo-login", "/api/auth/admin-check").permitAll()
 				// Actuator health & info are publicly readable; all others require auth
 				.requestMatchers("/actuator/health", "/actuator/info").permitAll()
 				.requestMatchers("/actuator/**").hasRole("ADMIN")
@@ -80,6 +84,7 @@ public class SecurityConfig {
 			.authenticationProvider(authenticationProvider)
 			// Rate limiter runs before JWT filter to reject brute-force before token parsing
 			.addFilterBefore(loginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
+			.addFilterBefore(demoLoginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
 			.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
 		return http.build();
@@ -87,8 +92,7 @@ public class SecurityConfig {
 
 	@Bean
 	public DaoAuthenticationProvider authenticationProvider(PasswordEncoder passwordEncoder) {
-		// Spring Security 6.5 provides DaoAuthenticationProvider(UserDetailsService) constructor —
-		// use it and set the encoder separately to avoid the deprecated setUserDetailsService() call.
+		// Use the Spring Security 6.5 constructor to avoid the deprecated setUserDetailsService().
 		DaoAuthenticationProvider provider = new DaoAuthenticationProvider(adminUserDetailsService);
 		provider.setPasswordEncoder(passwordEncoder);
 		return provider;
@@ -106,17 +110,14 @@ public class SecurityConfig {
 
 	/**
 	 * CORS configuration.
-	 *
-	 * <p><strong>Security rule:</strong> {@code allowCredentials(true)} requires an explicit origin —
-	 * never a wildcard. The {@code resolvedAllowedOriginPatterns()} method in {@link CorsProperties}
-	 * defaults to {@code http://localhost:3000} (configured via {@code CORS_ORIGINS} env var).
+	 * allowCredentials(true) requires an explicit origin — wildcard is not allowed.
+	 * Allowed origins are configured via CORS_ORIGINS env var (default: http://localhost:3000).
 	 */
 	@Bean
 	public CorsConfigurationSource corsConfigurationSource() {
 		List<String> origins = corsProperties.resolvedAllowedOriginPatterns();
 
-		// Guard: refuse to start with wildcard + credentials — it is rejected by browsers anyway
-		// and masks a security misconfiguration.
+		// Wildcard + credentials is rejected by browsers and signals a misconfiguration.
 		if (origins.contains("*")) {
 			throw new IllegalStateException(
 				"CORS wildcard '*' cannot be used with allowCredentials=true. " +
@@ -136,11 +137,7 @@ public class SecurityConfig {
 		return source;
 	}
 
-	/**
-	 * Prevents Spring Boot from auto-registering JwtAuthenticationFilter in the ROOT servlet
-	 * filter chain. It must only run INSIDE the Spring Security filter chain (via addFilterBefore),
-	 * otherwise Spring Security's SecurityContextHolderFilter overwrites the SecurityContext it sets.
-	 */
+	/** Prevents Spring Boot from registering JwtAuthenticationFilter in the root servlet chain. */
 	@Bean
 	public FilterRegistrationBean<JwtAuthenticationFilter> jwtFilterRegistration(JwtAuthenticationFilter filter) {
 		FilterRegistrationBean<JwtAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
@@ -148,13 +145,18 @@ public class SecurityConfig {
 		return registration;
 	}
 
-	/**
-	 * Prevents Spring Boot from auto-registering LoginRateLimiterFilter in the ROOT servlet
-	 * filter chain. It must run inside the Spring Security chain at the correct position.
-	 */
+	/** Prevents Spring Boot from registering LoginRateLimiterFilter in the root servlet chain. */
 	@Bean
 	public FilterRegistrationBean<LoginRateLimiterFilter> rateLimiterFilterRegistration(LoginRateLimiterFilter filter) {
 		FilterRegistrationBean<LoginRateLimiterFilter> registration = new FilterRegistrationBean<>(filter);
+		registration.setEnabled(false);
+		return registration;
+	}
+
+	/** Prevents Spring Boot from registering DemoLoginRateLimiterFilter in the root servlet chain. */
+	@Bean
+	public FilterRegistrationBean<DemoLoginRateLimiterFilter> demoRateLimiterFilterRegistration(DemoLoginRateLimiterFilter filter) {
+		FilterRegistrationBean<DemoLoginRateLimiterFilter> registration = new FilterRegistrationBean<>(filter);
 		registration.setEnabled(false);
 		return registration;
 	}

@@ -18,6 +18,9 @@ public final class Messages {
 	// ==================== General Messages ====================
 	public static final String GENERAL_UNEXPECTED_ERROR = "An unexpected error occurred. Please try again later.";
 
+	// ===================== Database / Persistence Messages ====================
+	public static final String DATABASE_UNAVAILABLE =
+			"Database service is currently unavailable. Please try again later.";
 	// ==================== Security / JWT Messages ====================
 	/** Returned when the JWT signature is invalid or the token is structurally malformed. */
 	public static final String SECURITY_INVALID_TOKEN = "The provided authentication token is invalid.";
@@ -85,6 +88,10 @@ public final class Messages {
 
 	// ==================== Auth Messages ====================
 	public static final String AUTH_INVALID_CREDENTIALS = "Invalid email or password.";
+
+	// ==================== Demo Mode Messages ====================
+	/** Returned when a demo user attempts a blocked destructive operation. */
+	public static final String DEMO_OPERATION_NOT_ALLOWED = "Operation disabled in demo mode.";
 
 	// ==================== Person Messages ====================
 	public static final String PERSON_NOT_FOUND = "Person with id {0} was not found.";

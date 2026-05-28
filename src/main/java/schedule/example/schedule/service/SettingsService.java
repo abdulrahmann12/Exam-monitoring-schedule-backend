@@ -25,6 +25,7 @@ public class SettingsService {
 
 	private final SettingsRepository settingsRepository;
 	private final SettingsMapper settingsMapper;
+	private final DemoModeService demoModeService;
 
 	@Cacheable(value = CacheConfig.CACHE_SETTINGS, key = "'settings'")
 	public SettingsResponse getSettings() {
@@ -34,6 +35,7 @@ public class SettingsService {
 	@Transactional
 	@CachePut(value = CacheConfig.CACHE_SETTINGS, key = "'settings'")
 	public SettingsResponse updateSettings(@Valid SettingsRequest request) {
+		demoModeService.rejectIfDemoUser("update-settings");
 		Settings settings = getOrCreateSettingsEntity();
 		settingsMapper.updateEntity(request, settings);
 		settings.setId(ApplicationDefaults.DEFAULT_SETTINGS_ID);

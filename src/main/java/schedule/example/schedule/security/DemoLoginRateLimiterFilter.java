@@ -7,14 +7,13 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import schedule.example.schedule.dto.common.ApiErrorResponse;
 
-import org.springframework.lang.NonNull;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
@@ -22,33 +21,37 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * In-memory IP-based rate limiter for the login endpoint.
- * Limits each IP to {@value MAX_ATTEMPTS} attempts per {@value WINDOW_MILLIS}ms window, then returns 429.
- * NOTE: Single-node only — use Redis-backed solution (e.g. Bucket4j) for multi-instance deployments.
+ * IP-based rate limiter for the demo login endpoint ({@code POST /api/auth/demo-login}).
+ *
+ * <p>Allows at most {@value MAX_ATTEMPTS} demo-login requests per IP per
+ * {@value WINDOW_MILLIS}ms. This prevents automated abuse of the public demo endpoint
+ * without affecting any existing authentication flow.
+ *
+ * <p><strong>NOTE:</strong> Single-node, in-memory implementation.
+ * Replace with Redis-backed Bucket4j for multi-instance deployments.
  */
 @Component
-@Order(1)
-public class LoginRateLimiterFilter extends OncePerRequestFilter {
+public class DemoLoginRateLimiterFilter extends OncePerRequestFilter {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(LoginRateLimiterFilter.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(DemoLoginRateLimiterFilter.class);
 
-    private static final String LOGIN_PATH = "/api/auth/login";
+    private static final String DEMO_LOGIN_PATH = "/api/auth/demo-login";
     private static final String POST = "POST";
 
-    /** Max login attempts per window. */
-    private static final int MAX_ATTEMPTS = 10;
+    /** Maximum demo-login attempts allowed within the sliding window. */
+    private static final int MAX_ATTEMPTS = 5;
 
-    /** Window duration in milliseconds (1 minute). */
+    /** Sliding window duration in milliseconds (1 minute). */
     private static final long WINDOW_MILLIS = 60_000L;
 
-    /** Prune stale entries every N requests. */
-    private static final int CLEANUP_INTERVAL = 500;
+    /** Periodic cleanup threshold — prune stale entries every N requests. */
+    private static final int CLEANUP_INTERVAL = 200;
 
     private final ConcurrentHashMap<String, long[]> ipWindows = new ConcurrentHashMap<>();
     private final AtomicInteger requestCounter = new AtomicInteger(0);
     private final ObjectMapper objectMapper;
 
-    public LoginRateLimiterFilter(ObjectMapper objectMapper) {
+    public DemoLoginRateLimiterFilter(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
     }
 
@@ -58,12 +61,11 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain chain)
             throws ServletException, IOException {
 
-        if (!POST.equalsIgnoreCase(request.getMethod()) || !LOGIN_PATH.equals(request.getRequestURI())) {
+        if (!POST.equalsIgnoreCase(request.getMethod()) || !DEMO_LOGIN_PATH.equals(request.getRequestURI())) {
             chain.doFilter(request, response);
             return;
         }
 
-        // Periodically remove stale entries to prevent unbounded memory growth.
         if (requestCounter.incrementAndGet() % CLEANUP_INTERVAL == 0) {
             pruneStaleEntries();
         }
@@ -73,16 +75,14 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
 
         long[] window = ipWindows.compute(ip, (_, existing) -> {
             if (existing == null || now - existing[1] > WINDOW_MILLIS) {
-                // Start new window: [count=1, windowStart=now]
                 return new long[]{1L, now};
             }
             existing[0]++;
             return existing;
         });
 
-        long attempts = window[0];
-        if (attempts > MAX_ATTEMPTS) {
-            LOGGER.warn("Rate limit exceeded for login from IP={}, attempts={}", ip, attempts);
+        if (window[0] > MAX_ATTEMPTS) {
+            LOGGER.warn("[DEMO] Rate limit exceeded for demo-login from IP={}, attempts={}", ip, window[0]);
             writeRateLimitResponse(request, response);
             return;
         }
@@ -96,7 +96,7 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
             Instant.now(),
             HttpStatus.TOO_MANY_REQUESTS.value(),
             "Too Many Requests",
-            "Too many login attempts. Please wait 1 minute before trying again.",
+            "Too many demo login attempts. Please wait 1 minute before trying again.",
             request.getRequestURI(),
             List.of()
         );
@@ -105,10 +105,6 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
         objectMapper.writeValue(response.getOutputStream(), error);
     }
 
-    /**
-     * Resolves the real client IP, using X-Forwarded-For for reverse-proxy setups.
-     * Takes only the first (leftmost) entry to prevent header spoofing.
-     */
     private String resolveClientIp(HttpServletRequest request) {
         String xff = request.getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) {
@@ -117,11 +113,9 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
         return request.getRemoteAddr();
     }
 
-    /** Removes entries whose window has expired. */
     private void pruneStaleEntries() {
         long now = System.currentTimeMillis();
         ipWindows.entrySet().removeIf(entry -> now - entry.getValue()[1] > WINDOW_MILLIS);
     }
 }
-
 

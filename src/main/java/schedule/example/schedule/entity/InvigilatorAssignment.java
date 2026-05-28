@@ -11,22 +11,27 @@ import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.ToString;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.Instant;
 import java.util.UUID;
 
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @Entity
 @EntityListeners(AuditingEntityListener.class)
 @Table(
         name = "invigilator_assignments",
         indexes = {
-                // Index on invigilator_id: supports existsByInvigilatorId and countSlotUsage queries
                 @Index(name = "idx_invigilator_assignment_person", columnList = "invigilator_id"),
-                // Index on room_assignment_id: critical for Hibernate joining this table when loading
-                // RoomAssignment.invigilatorAssignments via EntityGraph. Without this, every
-                // detail fetch causes a full table scan on invigilator_assignments.
                 @Index(name = "idx_invigilator_assignment_room", columnList = "room_assignment_id")
         }
 )
@@ -36,49 +41,27 @@ public class InvigilatorAssignment {
         @GeneratedValue(strategy = GenerationType.UUID)
         private UUID id;
 
+        @ToString.Exclude
         @ManyToOne(fetch = FetchType.LAZY, optional = false)
         @JoinColumn(name = "room_assignment_id", nullable = false)
         private RoomAssignment roomAssignment;
 
+        @ToString.Exclude
         @ManyToOne(fetch = FetchType.LAZY)
         @JoinColumn(name = "invigilator_id")
         private Person invigilator;
 
-        /**
-         * Ordered position index within the room assignment — mapped by @OrderColumn.
-         * Stored here as a field for explicit querying.
-         */
+        /** Position within the room assignment (mapped by @OrderColumn). */
+        @Builder.Default
         @Column(name = "position_index", nullable = false)
         private int positionIndex = 0;
 
-        /**
-         * True for positions up to room.minInvigilators (mandatory slots).
-         * False for extra positions added dynamically by the admin.
-         */
+        /** True for mandatory slots (up to room.minInvigilators). */
+        @Builder.Default
         @Column(nullable = false)
         private boolean required = true;
 
         @CreatedDate
         @Column(nullable = false, updatable = false)
         private Instant createdAt;
-
-        public InvigilatorAssignment() {
-        }
-
-        public UUID getId() { return id; }
-        public void setId(UUID id) { this.id = id; }
-
-        public RoomAssignment getRoomAssignment() { return roomAssignment; }
-        public void setRoomAssignment(RoomAssignment roomAssignment) { this.roomAssignment = roomAssignment; }
-
-        public Person getInvigilator() { return invigilator; }
-        public void setInvigilator(Person invigilator) { this.invigilator = invigilator; }
-
-        public int getPositionIndex() { return positionIndex; }
-        public void setPositionIndex(int positionIndex) { this.positionIndex = positionIndex; }
-
-        public boolean isRequired() { return required; }
-        public void setRequired(boolean required) { this.required = required; }
-
-        public Instant getCreatedAt() { return createdAt; }
 }
