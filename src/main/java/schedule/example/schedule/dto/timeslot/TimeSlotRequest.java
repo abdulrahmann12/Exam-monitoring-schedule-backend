@@ -4,8 +4,11 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalTime;
+import java.util.UUID;
 
 public record TimeSlotRequest(
+        UUID scheduleGroupId,
+
         @Size(max = 120, message = "Label must be at most 120 characters")
         String label,
 

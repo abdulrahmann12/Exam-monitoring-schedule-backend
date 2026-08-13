@@ -47,10 +47,11 @@ public class PeopleController {
 		@RequestParam(defaultValue = "ASC") Sort.Direction direction,
 		@RequestParam(required = false) PersonRole role,
 		@RequestParam(required = false) String department,
-		@RequestParam(required = false) String name
+		@RequestParam(required = false) String name,
+		@RequestParam(required = false) UUID scheduleGroupId
 	) {
 		Pageable pageable = pageRequestFactory.create(page, size, sortBy, direction, ALLOWED_SORTS);
-		return peopleService.getPeople(role, department, name, pageable);
+		return peopleService.getPeople(role, department, name, scheduleGroupId, pageable);
 	}
 
 	@PostMapping

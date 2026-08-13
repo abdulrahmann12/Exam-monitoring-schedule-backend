@@ -52,12 +52,12 @@ public class CacheConfig {
                 .build()
         );
 
-        // Dashboard: TTL 60 seconds, single-entry (one system-wide summary)
+        // Dashboard: TTL 60 seconds, one entry per schedule group
         CaffeineCache dashboardCache = new CaffeineCache(
             CACHE_DASHBOARD,
             Caffeine.newBuilder()
                 .expireAfterWrite(60, TimeUnit.SECONDS)
-                .maximumSize(1)
+                .maximumSize(32)
                 .build()
         );
 

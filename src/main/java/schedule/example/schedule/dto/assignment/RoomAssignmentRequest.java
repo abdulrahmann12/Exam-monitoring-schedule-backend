@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.UUID;
 
 public record RoomAssignmentRequest(
+		UUID scheduleGroupId,
+
 		@NotNull(message = "Exam date is required")
 		LocalDate examDate,
 

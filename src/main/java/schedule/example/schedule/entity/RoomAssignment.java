@@ -23,6 +23,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.ToString;
 import org.hibernate.annotations.BatchSize;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -45,7 +47,9 @@ import java.util.UUID;
         name = "room_assignments",
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_room_assignment_date_slot_room",
-                        columnNames = {"exam_date", "time_slot_id", "room_id"})
+                        columnNames = {"exam_date", "time_slot_id", "room_id"}),
+                @UniqueConstraint(name = "uk_ra_group_date_slot_room",
+                        columnNames = {"schedule_group_id", "exam_date", "time_slot_id", "room_id"})
         },
         indexes = {
                 @Index(name = "idx_room_assignment_date", columnList = "exam_date"),
@@ -53,7 +57,10 @@ import java.util.UUID;
                 @Index(name = "idx_room_assignment_chief", columnList = "chief_invigilator_id"),
                 @Index(name = "idx_room_assignment_locked", columnList = "is_locked"),
                 @Index(name = "idx_ra_slot_date_chief", columnList = "time_slot_id, exam_date, chief_invigilator_id"),
-                @Index(name = "idx_ra_date_slot", columnList = "exam_date, time_slot_id")
+                @Index(name = "idx_ra_date_slot", columnList = "exam_date, time_slot_id"),
+                @Index(name = "idx_ra_schedule_group", columnList = "schedule_group_id"),
+                @Index(name = "idx_ra_group_slot_date_chief",
+                        columnList = "schedule_group_id, time_slot_id, exam_date, chief_invigilator_id")
         }
 )
 public class RoomAssignment {
@@ -61,6 +68,16 @@ public class RoomAssignment {
         @Id
         @GeneratedValue(strategy = GenerationType.UUID)
         private UUID id;
+
+        /**
+         * Nullable only so existing rows can be attached on startup.
+         * New assignments inherit the group from their time slot; deleting a group cascades here.
+         */
+        @ToString.Exclude
+        @ManyToOne(fetch = FetchType.LAZY)
+        @JoinColumn(name = "schedule_group_id")
+        @OnDelete(action = OnDeleteAction.CASCADE)
+        private ScheduleGroup scheduleGroup;
 
         /** Exam date for this assignment. */
         @Column(name = "exam_date", nullable = false)

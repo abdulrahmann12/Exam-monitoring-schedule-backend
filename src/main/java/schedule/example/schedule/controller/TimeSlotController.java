@@ -45,11 +45,12 @@ public class TimeSlotController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = "sortOrder") String sortBy,
             @RequestParam(defaultValue = "ASC") Sort.Direction direction,
+            @RequestParam(required = false) UUID scheduleGroupId,
             @RequestParam(required = false) String label,
             @RequestParam(required = false) Boolean activeOnly
     ) {
         Pageable pageable = pageRequestFactory.create(page, size, sortBy, direction, ALLOWED_SORTS);
-        return timeSlotService.getTimeSlots(label, activeOnly, pageable);
+        return timeSlotService.getTimeSlots(scheduleGroupId, label, activeOnly, pageable);
     }
 
     @PostMapping

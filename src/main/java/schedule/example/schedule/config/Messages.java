@@ -100,6 +100,12 @@ public final class Messages {
 	public static final String PERSON_ROLE_CHANGE_CHIEF_IN_USE = "Person ''{0}'' is currently assigned as a chief invigilator and cannot change to a non-chief role.";
 	public static final String PERSON_ROLE_CHANGE_INVIGILATOR_IN_USE = "Person ''{0}'' is currently assigned as an invigilator and cannot change to a non-invigilator role.";
 	public static final String PERSON_AVAILABILITY_CONFLICT = "Updated availability does not cover an existing assignment on {0} ({1}).";
+	public static final String PERSON_EMAIL_EXISTS = "A person with email ''{0}'' already exists.";
+
+	// ==================== Schedule Group Messages ====================
+	public static final String SCHEDULE_GROUP_NAME_EXISTS = "Schedule group ''{0}'' already exists.";
+	public static final String SCHEDULE_GROUP_NOT_FOUND = "Schedule group with id {0} was not found.";
+	public static final String SCHEDULE_GROUP_DELETE_LAST = "The last schedule group cannot be deleted.";
 
 	// ==================== Room Messages ====================
 	public static final String ROOM_NOT_FOUND = "Room with id {0} was not found.";
@@ -111,6 +117,7 @@ public final class Messages {
 	public static final String SLOT_INACTIVE = "Time slot is inactive and cannot be used for new assignments.";
 	public static final String SLOT_DELETE_IN_USE = "Time slot ''{0}'' at {1} is referenced by existing assignments and cannot be deleted. Use deactivate instead.";
 	public static final String SLOT_INVALID_RANGE = "End time must be after start time.";
+	public static final String SLOT_CANNOT_CHANGE_GROUP = "A time slot cannot be moved to a different schedule group.";
 
 	// ==================== Assignment Messages ====================
 	public static final String ASSIGNMENT_NOT_FOUND = "Assignment with id {0} was not found.";
@@ -121,9 +128,12 @@ public final class Messages {
 	public static final String ASSIGNMENT_INVIGILATOR_DUPLICATE = "Duplicate invigilator ids are not allowed in the same room assignment.";
 	public static final String ASSIGNMENT_BULK_EMPTY = "At least one room assignment is required for bulk save.";
 	public static final String ASSIGNMENT_BULK_DUPLICATE_ROOM_SLOT = "Duplicate bulk assignment for room {0}, slot {1}, and date {2}.";
-	public static final String ASSIGNMENT_CHIEF_LIMIT = "Chief invigilator ''{0}'' is already supervising the maximum number of rooms for this time slot.";
-	public static final String ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED = "Invigilator ''{0}'' is already assigned in this time slot.";
+	public static final String ASSIGNMENT_CHIEF_LIMIT = "Chief invigilator ''{0}'' is already supervising the maximum number of rooms at an overlapping time.";
+	public static final String ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED = "Invigilator ''{0}'' is already assigned at an overlapping time.";
 	public static final String ASSIGNMENT_CHIEF_UNAVAILABLE = "Chief invigilator ''{0}'' is unavailable on {1} ({2}).";
 	public static final String ASSIGNMENT_INVIGILATOR_UNAVAILABLE = "Invigilator ''{0}'' is unavailable on {1} ({2}).";
+	public static final String ASSIGNMENT_SLOT_GROUP_MISMATCH = "Time slot does not belong to schedule group ''{0}''.";
+	public static final String ASSIGNMENT_BULK_MIXED_GROUPS = "Bulk save cannot mix assignments from different schedule groups.";
+	public static final String ASSIGNMENT_GROUP_REQUIRED = "Assignment is missing a schedule group.";
 }
 

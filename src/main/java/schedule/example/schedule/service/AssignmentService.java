@@ -19,6 +19,7 @@ import schedule.example.schedule.entity.InvigilatorAssignment;
 import schedule.example.schedule.entity.Person;
 import schedule.example.schedule.entity.Room;
 import schedule.example.schedule.entity.RoomAssignment;
+import schedule.example.schedule.entity.ScheduleGroup;
 import schedule.example.schedule.entity.TimeSlot;
 import schedule.example.schedule.entity.enums.AssignmentSource;
 import schedule.example.schedule.entity.enums.PersonRole;
@@ -27,7 +28,6 @@ import schedule.example.schedule.exception.ConflictException;
 import schedule.example.schedule.exception.NotFoundException;
 import schedule.example.schedule.exception.ValidationException;
 import schedule.example.schedule.mapper.RoomAssignmentMapper;
-import schedule.example.schedule.repository.InvigilatorAssignmentRepository;
 import schedule.example.schedule.repository.PersonRepository;
 import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.RoomRepository;
@@ -54,19 +54,20 @@ import java.util.stream.Collectors;
 public class AssignmentService {
 
     private final RoomAssignmentRepository roomAssignmentRepository;
-    private final InvigilatorAssignmentRepository invigilatorAssignmentRepository;
     private final RoomRepository roomRepository;
     private final TimeSlotRepository timeSlotRepository;
     private final PersonRepository personRepository;
     private final RoomAssignmentMapper roomAssignmentMapper;
     private final DemoModeService demoModeService;
+    private final ScheduleGroupSupport scheduleGroupSupport;
 
 
     public PageResponse<RoomAssignmentResponse> getAssignments(
-            UUID slotId, UUID roomId, Boolean locked,
+            UUID scheduleGroupId, UUID slotId, UUID roomId, Boolean locked,
             LocalDate fromDate, LocalDate toDate, Pageable pageable) {
+        UUID groupId = scheduleGroupSupport.requireGroup(scheduleGroupId).getId();
         Page<UUID> assignmentIds = roomAssignmentRepository.findIdsByFilters(
-                slotId, roomId, locked, fromDate, toDate, pageable);
+                groupId, slotId, roomId, locked, fromDate, toDate, pageable);
         List<RoomAssignmentResponse> ordered = getOrderedAssignmentResponses(assignmentIds.getContent());
         return PageResponse.from(new PageImpl<>(ordered, pageable, assignmentIds.getTotalElements()));
     }
@@ -111,7 +112,8 @@ public class AssignmentService {
         Map<UUID, Room> roomsById = loadRooms(requests);
         Map<UUID, TimeSlot> timeSlotsById = loadTimeSlots(requests);
         Map<UUID, Person> peopleById = loadPeople(requests);
-        List<RoomAssignment> existingAssignments = loadExistingAssignments(requests);
+        ScheduleGroup bulkGroup = resolveBulkGroup(requests, timeSlotsById);
+        List<RoomAssignment> existingAssignments = loadExistingAssignments(requests, bulkGroup.getId());
         Map<AssignmentCompositeKey, RoomAssignment> existingByKey = existingAssignments.stream()
                 .collect(Collectors.toMap(AssignmentCompositeKey::from, Function.identity()));
 
@@ -123,11 +125,11 @@ public class AssignmentService {
         for (BulkRoomAssignmentRequest request : requests) {
             AssignmentCompositeKey key = AssignmentCompositeKey.from(request);
             RoomAssignment assignment = existingByKey.getOrDefault(key, new RoomAssignment());
-            configureBulkAssignmentRelations(assignment, request, roomsById, timeSlotsById, peopleById);
+            configureBulkAssignmentRelations(assignment, request, roomsById, timeSlotsById, peopleById, bulkGroup);
             preparedAssignments.add(assignment);
         }
 
-        validateBulkAssignmentRules(preparedAssignments);
+        validateBulkAssignmentRules(preparedAssignments, bulkGroup.getId());
 
         Set<AssignmentCompositeKey> preparedKeys = preparedAssignments.stream()
                 .map(AssignmentCompositeKey::from)
@@ -233,7 +235,7 @@ public class AssignmentService {
                 .collect(Collectors.toMap(Person::getId, Function.identity()));
     }
 
-    private List<RoomAssignment> loadExistingAssignments(List<BulkRoomAssignmentRequest> requests) {
+    private List<RoomAssignment> loadExistingAssignments(List<BulkRoomAssignmentRequest> requests, UUID groupId) {
         Set<LocalDate> examDates = requests.stream()
                 .map(BulkRoomAssignmentRequest::examDate)
                 .collect(Collectors.toSet());
@@ -241,7 +243,7 @@ public class AssignmentService {
                 .map(BulkRoomAssignmentRequest::slotId)
                 .collect(Collectors.toSet());
 
-        return roomAssignmentRepository.findAllDetailedByExamDateInAndTimeSlotIdIn(examDates, slotIds);
+        return roomAssignmentRepository.findAllDetailedByExamDateInAndTimeSlotIdIn(groupId, examDates, slotIds);
     }
 
     private void validateRequestKeys(List<BulkRoomAssignmentRequest> requests) {
@@ -282,6 +284,7 @@ public class AssignmentService {
         assignment.setExamDate(request.examDate());
         assignment.setRoom(room);
         assignment.setTimeSlot(timeSlot);
+        assignment.setScheduleGroup(resolveAssignmentGroup(request.scheduleGroupId(), timeSlot, assignment.getScheduleGroup()));
         assignment.setChiefInvigilator(chiefInvigilator);
         assignment.setLocked(Boolean.TRUE.equals(request.locked()));
         assignment.setSource(request.source() != null ? request.source() : AssignmentSource.MANUAL);
@@ -293,7 +296,8 @@ public class AssignmentService {
             BulkRoomAssignmentRequest request,
             Map<UUID, Room> roomsById,
             Map<UUID, TimeSlot> timeSlotsById,
-            Map<UUID, Person> peopleById
+            Map<UUID, Person> peopleById,
+            ScheduleGroup group
     ) {
         if (request.examDate() == null) {
             throw new ValidationException(Messages.ASSIGNMENT_SLOT_DATE_REQUIRED);
@@ -315,10 +319,59 @@ public class AssignmentService {
         assignment.setExamDate(request.examDate());
         assignment.setRoom(room);
         assignment.setTimeSlot(timeSlot);
+        assertSlotBelongsToGroup(timeSlot, group);
+        assignment.setScheduleGroup(group);
         assignment.setChiefInvigilator(chiefInvigilator);
         assignment.setLocked(Boolean.TRUE.equals(request.isLocked()));
         assignment.setSource(AssignmentSource.GENERATED);
         assignment.replaceInvigilatorAssignments(buildInvigilatorAssignments(invigilators, room.getMinInvigilators()));
+    }
+
+    private ScheduleGroup resolveAssignmentGroup(UUID requestedGroupId, TimeSlot timeSlot, ScheduleGroup existing) {
+        ScheduleGroup group;
+        if (requestedGroupId != null) {
+            group = scheduleGroupSupport.requireGroup(requestedGroupId);
+        } else if (existing != null) {
+            group = existing;
+        } else if (timeSlot.getScheduleGroup() != null) {
+            group = timeSlot.getScheduleGroup();
+        } else {
+            group = scheduleGroupSupport.getOrCreateDefaultGroup();
+        }
+        assertSlotBelongsToGroup(timeSlot, group);
+        return group;
+    }
+
+    private ScheduleGroup resolveBulkGroup(List<BulkRoomAssignmentRequest> requests, Map<UUID, TimeSlot> timeSlotsById) {
+        Set<UUID> groupIds = new HashSet<>();
+        for (BulkRoomAssignmentRequest request : requests) {
+            if (request.scheduleGroupId() != null) {
+                groupIds.add(request.scheduleGroupId());
+                continue;
+            }
+            TimeSlot slot = timeSlotsById.get(request.slotId());
+            if (slot != null && slot.getScheduleGroup() != null) {
+                groupIds.add(slot.getScheduleGroup().getId());
+            }
+        }
+        if (groupIds.size() > 1) {
+            throw new ValidationException(Messages.ASSIGNMENT_BULK_MIXED_GROUPS);
+        }
+        if (groupIds.size() == 1) {
+            return scheduleGroupSupport.requireGroup(groupIds.iterator().next());
+        }
+        return scheduleGroupSupport.getOrCreateDefaultGroup();
+    }
+
+    private void assertSlotBelongsToGroup(TimeSlot timeSlot, ScheduleGroup group) {
+        if (timeSlot.getScheduleGroup() == null) {
+            timeSlot.setScheduleGroup(group);
+            return;
+        }
+        if (!timeSlot.getScheduleGroup().getId().equals(group.getId())) {
+            throw new ConflictException(MessageFormat.format(
+                    Messages.ASSIGNMENT_SLOT_GROUP_MISMATCH, group.getName()));
+        }
     }
 
     private Person resolveChiefInvigilator(UUID chiefInvigilatorId) {
@@ -409,110 +462,162 @@ public class AssignmentService {
     }
 
     private void validateAssignmentRules(RoomAssignment assignment, UUID existingId) {
+        if (assignment.getScheduleGroup() == null) {
+            throw new ValidationException(Messages.ASSIGNMENT_GROUP_REQUIRED);
+        }
+
+        UUID groupId = assignment.getScheduleGroup().getId();
         UUID roomId = assignment.getRoom().getId();
         UUID timeSlotId = assignment.getTimeSlot().getId();
         LocalDate examDate = assignment.getExamDate();
 
         boolean duplicate = existingId == null
-                ? roomAssignmentRepository.existsByRoomIdAndTimeSlotIdAndExamDate(roomId, timeSlotId, examDate)
-                : roomAssignmentRepository.existsByRoomIdAndTimeSlotIdAndExamDateAndIdNot(roomId, timeSlotId, examDate, existingId);
+                ? roomAssignmentRepository.existsByScheduleGroupIdAndRoomIdAndTimeSlotIdAndExamDate(
+                        groupId, roomId, timeSlotId, examDate)
+                : roomAssignmentRepository.existsByScheduleGroupIdAndRoomIdAndTimeSlotIdAndExamDateAndIdNot(
+                        groupId, roomId, timeSlotId, examDate, existingId);
         if (duplicate) {
             throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_DUPLICATE_ROOM_SLOT, assignment.getRoom().getName()));
         }
 
+        List<RoomAssignment> sameDay = roomAssignmentRepository
+                .findAllDetailedByScheduleGroupIdAndExamDateIn(groupId, List.of(examDate));
+        List<RoomAssignment> universe = new ArrayList<>();
+        for (RoomAssignment existing : sameDay) {
+            if (existingId == null || !existingId.equals(existing.getId())) {
+                universe.add(existing);
+            }
+        }
+        universe.add(assignment);
+        validateStaffConcurrency(assignment, universe);
+    }
+
+    /**
+     * Validates inter-assignment constraints for a bulk operation using real time overlap.
+     *
+     * <p>The payload typically replaces one date+slot slice. Other slots on the same date
+     * stay in the database, so they are loaded and included when counting overlapping rooms.
+     */
+    private void validateBulkAssignmentRules(List<RoomAssignment> assignments, UUID groupId) {
+        Set<UUID> groupIds = assignments.stream()
+                .map(assignment -> assignment.getScheduleGroup() != null ? assignment.getScheduleGroup().getId() : null)
+                .collect(Collectors.toSet());
+        if (groupIds.contains(null) || groupIds.size() != 1) {
+            throw new ValidationException(Messages.ASSIGNMENT_BULK_MIXED_GROUPS);
+        }
+
+        Set<LocalDate> examDates = assignments.stream()
+                .map(RoomAssignment::getExamDate)
+                .collect(Collectors.toSet());
+        Set<SlotDayKey> replacedSlots = assignments.stream()
+                .map(SlotDayKey::from)
+                .collect(Collectors.toSet());
+
+        List<RoomAssignment> universe = new ArrayList<>();
+        if (!examDates.isEmpty()) {
+            for (RoomAssignment existing : roomAssignmentRepository
+                    .findAllDetailedByScheduleGroupIdAndExamDateIn(groupId, examDates)) {
+                if (!replacedSlots.contains(SlotDayKey.from(existing))) {
+                    universe.add(existing);
+                }
+            }
+        }
+        universe.addAll(assignments);
+
+        for (RoomAssignment assignment : assignments) {
+            validateStaffConcurrency(assignment, universe);
+        }
+    }
+
+    private void validateStaffConcurrency(RoomAssignment assignment, List<RoomAssignment> universe) {
+        LocalDate examDate = assignment.getExamDate();
+
         if (assignment.getChiefInvigilator() != null) {
-            validateAvailability(assignment.getChiefInvigilator(), examDate, true);
-            long chiefCount = existingId == null
-                    ? roomAssignmentRepository.countByTimeSlotIdAndExamDateAndChiefInvigilatorId(timeSlotId, examDate, assignment.getChiefInvigilator().getId())
-                    : roomAssignmentRepository.countByTimeSlotIdAndExamDateAndChiefInvigilatorIdAndIdNot(timeSlotId, examDate, assignment.getChiefInvigilator().getId(), existingId);
-            if (chiefCount >= assignment.getChiefInvigilator().getMaxParallelRooms()) {
-                throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_CHIEF_LIMIT, assignment.getChiefInvigilator().getName()));
+            Person chief = assignment.getChiefInvigilator();
+            validateAvailability(chief, examDate, true);
+            int overlapping = countOverlappingChiefRooms(universe, assignment, chief.getId());
+            if (overlapping >= chief.getMaxParallelRooms()) {
+                throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_CHIEF_LIMIT, chief.getName()));
             }
         }
 
-        // Collect all non-null invigilators for a single batch double-booking check.
-        List<InvigilatorAssignment> filledSlots = assignment.getInvigilatorAssignments().stream()
-                .filter(ia -> ia.getInvigilator() != null)
-                .toList();
+        if (assignment.getInvigilatorAssignments() == null) {
+            return;
+        }
 
-        if (!filledSlots.isEmpty()) {
-            // Availability check is in-memory — no DB calls.
-            filledSlots.forEach(ia -> validateAvailability(ia.getInvigilator(), examDate, false));
-
-            // Single IN-query replaces N individual COUNT queries (N = number of invigilators).
-            List<UUID> invigilatorIds = filledSlots.stream()
-                    .map(ia -> ia.getInvigilator().getId())
-                    .toList();
-
-            Set<UUID> doubleBooked = invigilatorAssignmentRepository.findDoubleBookedInvigilatorIds(
-                    timeSlotId, examDate, invigilatorIds, existingId);
-
-            if (!doubleBooked.isEmpty()) {
-                InvigilatorAssignment culprit = filledSlots.stream()
-                        .filter(ia -> doubleBooked.contains(ia.getInvigilator().getId()))
-                        .findFirst()
-                        .orElseThrow();
+        for (InvigilatorAssignment ia : assignment.getInvigilatorAssignments()) {
+            if (ia.getInvigilator() == null) {
+                continue;
+            }
+            Person invigilator = ia.getInvigilator();
+            validateAvailability(invigilator, examDate, false);
+            if (countOverlappingInvigilatorRooms(universe, assignment, invigilator.getId()) >= 1) {
                 throw new ConflictException(MessageFormat.format(
-                        Messages.ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED, culprit.getInvigilator().getName()));
+                        Messages.ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED, invigilator.getName()));
             }
         }
     }
 
-    /**
-     * Validates inter-assignment constraints for a bulk operation.
-     *
-     * <p><strong>Performance fix (O(n²) → O(n)):</strong>
-     * The previous implementation searched through all assignments with a linear stream scan
-     * for every (slot-key, personId) entry in the count maps — O(K × N) total.
-     *
-     * <p>This version builds lookup maps ({@code chiefSamples}, {@code invigilatorSamples})
-     * in the initial loop — O(N) — so violation reporting is O(1) per entry.
-     */
-    private void validateBulkAssignmentRules(List<RoomAssignment> assignments) {
-        // Occurrence counts per (slotKey, personId)
-        Map<SlotOccurrenceKey, Map<UUID, Integer>> chiefCounts = new HashMap<>();
-        Map<SlotOccurrenceKey, Map<UUID, Integer>> invigilatorCounts = new HashMap<>();
-
-        // Sample assignment / person references for violation messages — built in same loop, O(1) lookup
-        Map<SlotOccurrenceKey, Map<UUID, RoomAssignment>> chiefSamples = new HashMap<>();
-        Map<SlotOccurrenceKey, Map<UUID, Person>> invigilatorSamples = new HashMap<>();
-
-        for (RoomAssignment assignment : assignments) {
-            SlotOccurrenceKey key = SlotOccurrenceKey.from(assignment);
-
-            if (assignment.getChiefInvigilator() != null) {
-                validateAvailability(assignment.getChiefInvigilator(), assignment.getExamDate(), true);
-                UUID chiefId = assignment.getChiefInvigilator().getId();
-                chiefCounts.computeIfAbsent(key, k -> new HashMap<>()).merge(chiefId, 1, Integer::sum);
-                chiefSamples.computeIfAbsent(key, k -> new HashMap<>()).putIfAbsent(chiefId, assignment);
+    private static int countOverlappingChiefRooms(
+            List<RoomAssignment> universe,
+            RoomAssignment current,
+            UUID chiefId
+    ) {
+        int count = 0;
+        for (RoomAssignment other : universe) {
+            if (other == current) {
+                continue;
             }
-
-            for (InvigilatorAssignment ia : assignment.getInvigilatorAssignments()) {
-                if (ia.getInvigilator() == null) continue;
-                validateAvailability(ia.getInvigilator(), assignment.getExamDate(), false);
-                UUID invId = ia.getInvigilator().getId();
-                invigilatorCounts.computeIfAbsent(key, k -> new HashMap<>()).merge(invId, 1, Integer::sum);
-                invigilatorSamples.computeIfAbsent(key, k -> new HashMap<>()).putIfAbsent(invId, ia.getInvigilator());
+            if (!current.getExamDate().equals(other.getExamDate())) {
+                continue;
+            }
+            if (other.getChiefInvigilator() == null || !chiefId.equals(other.getChiefInvigilator().getId())) {
+                continue;
+            }
+            if (overlaps(current.getTimeSlot(), other.getTimeSlot())) {
+                count++;
             }
         }
+        return count;
+    }
 
-        // Validate chief parallel-room limits — O(1) lookup per entry via chiefSamples
-        chiefCounts.forEach((key, counts) -> counts.forEach((chiefId, count) -> {
-            RoomAssignment sample = chiefSamples.get(key).get(chiefId);
-            Person chief = sample.getChiefInvigilator();
-            if (count > chief.getMaxParallelRooms()) {
-                throw new ConflictException(
-                    MessageFormat.format(Messages.ASSIGNMENT_CHIEF_LIMIT, chief.getName()));
+    private static int countOverlappingInvigilatorRooms(
+            List<RoomAssignment> universe,
+            RoomAssignment current,
+            UUID invigilatorId
+    ) {
+        int count = 0;
+        for (RoomAssignment other : universe) {
+            if (other == current) {
+                continue;
             }
-        }));
+            if (!current.getExamDate().equals(other.getExamDate())) {
+                continue;
+            }
+            if (!overlaps(current.getTimeSlot(), other.getTimeSlot()) || other.getInvigilatorAssignments() == null) {
+                continue;
+            }
+            for (InvigilatorAssignment ia : other.getInvigilatorAssignments()) {
+                if (ia.getInvigilator() != null && invigilatorId.equals(ia.getInvigilator().getId())) {
+                    count++;
+                    break;
+                }
+            }
+        }
+        return count;
+    }
 
-        // Validate invigilator double-booking — O(1) lookup per entry via invigilatorSamples
-        invigilatorCounts.forEach((key, counts) -> counts.forEach((invId, count) -> {
-            if (count <= 1) return;
-            Person person = invigilatorSamples.get(key).get(invId);
-            throw new ConflictException(
-                MessageFormat.format(Messages.ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED, person.getName()));
-        }));
+    /**
+     * Two slots overlap when each starts before the other ends:
+     * {@code A.start < B.end && A.end > B.start}.
+     */
+    static boolean overlaps(TimeSlot left, TimeSlot right) {
+        if (left == null || right == null || left.getStartTime() == null || left.getEndTime() == null
+                || right.getStartTime() == null || right.getEndTime() == null) {
+            return false;
+        }
+        return left.getStartTime().isBefore(right.getEndTime())
+                && left.getEndTime().isAfter(right.getStartTime());
     }
 
     private void validateAvailability(Person person, LocalDate examDate, boolean isChief) {
@@ -603,9 +708,9 @@ public class AssignmentService {
         }
     }
 
-    private record SlotOccurrenceKey(LocalDate examDate, UUID slotId) {
-        static SlotOccurrenceKey from(RoomAssignment assignment) {
-            return new SlotOccurrenceKey(assignment.getExamDate(), assignment.getTimeSlot().getId());
+    private record SlotDayKey(LocalDate examDate, UUID slotId) {
+        static SlotDayKey from(RoomAssignment assignment) {
+            return new SlotDayKey(assignment.getExamDate(), assignment.getTimeSlot().getId());
         }
     }
 }

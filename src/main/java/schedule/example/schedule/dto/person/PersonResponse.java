@@ -11,6 +11,7 @@ public record PersonResponse(
 	UUID id,
 	String name,
 	String department,
+	String email,
 	PersonRole role,
 	Set<WeekDay> availableDays,
 	int totalAssignments,
@@ -19,4 +20,19 @@ public record PersonResponse(
 	Instant createdAt,
 	Instant updatedAt
 ) {
+	public PersonResponse withTotalAssignments(int nextTotalAssignments) {
+		return new PersonResponse(
+			id,
+			name,
+			department,
+			email,
+			role,
+			availableDays,
+			nextTotalAssignments,
+			active,
+			maxParallelRooms,
+			createdAt,
+			updatedAt
+		);
+	}
 }

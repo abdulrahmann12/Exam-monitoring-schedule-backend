@@ -31,6 +31,7 @@ import schedule.example.schedule.util.NameNormalizationUtil;
 
 import java.time.Instant;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -47,7 +48,8 @@ import java.util.UUID;
                 @Index(name = "idx_person_name", columnList = "name"),
                 @Index(name = "idx_person_normalized_name", columnList = "normalized_name", unique = true),
                 @Index(name = "idx_person_active", columnList = "active"),
-                @Index(name = "idx_person_department", columnList = "department")
+                @Index(name = "idx_person_department", columnList = "department"),
+                @Index(name = "idx_person_email", columnList = "email", unique = true)
         }
 )
 public class Person {
@@ -64,6 +66,10 @@ public class Person {
 
         @Column(nullable = false, length = 160)
         private String department;
+
+        /** Optional unique address used for schedule notification emails. */
+        @Column(length = 255, unique = true)
+        private String email;
 
         @Setter(AccessLevel.NONE)
         @Enumerated(EnumType.STRING)
@@ -116,6 +122,15 @@ public class Person {
         /** Use setName() instead — it keeps normalizedName in sync. */
         public void setNormalizedName(String normalizedName) {
                 this.normalizedName = NameNormalizationUtil.normalizeForComparison(normalizedName);
+        }
+
+        /** Blank values are stored as null so the unique index allows many people without email. */
+        public void setEmail(String email) {
+                if (email == null || email.isBlank()) {
+                        this.email = null;
+                        return;
+                }
+                this.email = email.trim().toLowerCase(Locale.ROOT);
         }
 
         /** Sets role and auto-derives maxParallelRooms (CHIEF=2, INVIGILATOR=1). */

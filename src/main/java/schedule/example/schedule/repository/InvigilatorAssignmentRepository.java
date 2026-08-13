@@ -8,6 +8,7 @@ import schedule.example.schedule.entity.InvigilatorAssignment;
 
 import java.time.LocalDate;
 import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -25,12 +26,14 @@ public interface InvigilatorAssignmentRepository extends JpaRepository<Invigilat
 	@Query("""
 		select count(ia) from InvigilatorAssignment ia
 		join ia.roomAssignment ra
-		where ra.timeSlot.id = :slotId
+		where ra.scheduleGroup.id = :groupId
+		and ra.timeSlot.id = :slotId
 		and ra.examDate = :examDate
 		and ia.invigilator.id = :invigilatorId
 		and (:excludedRoomAssignmentId is null or ra.id <> :excludedRoomAssignmentId)
 		""")
 	long countSlotUsage(
+		@Param("groupId") UUID groupId,
 		@Param("slotId") UUID slotId,
 		@Param("examDate") LocalDate examDate,
 		@Param("invigilatorId") UUID invigilatorId,
@@ -48,15 +51,27 @@ public interface InvigilatorAssignmentRepository extends JpaRepository<Invigilat
 	@Query("""
 		select ia.invigilator.id from InvigilatorAssignment ia
 		join ia.roomAssignment ra
-		where ra.timeSlot.id = :slotId
+		where ra.scheduleGroup.id = :groupId
+		and ra.timeSlot.id = :slotId
 		and ra.examDate = :examDate
 		and ia.invigilator.id in :invigilatorIds
 		and (:excludedRoomAssignmentId is null or ra.id <> :excludedRoomAssignmentId)
 		""")
 	Set<UUID> findDoubleBookedInvigilatorIds(
+		@Param("groupId") UUID groupId,
 		@Param("slotId") UUID slotId,
 		@Param("examDate") LocalDate examDate,
 		@Param("invigilatorIds") Collection<UUID> invigilatorIds,
 		@Param("excludedRoomAssignmentId") UUID excludedRoomAssignmentId
 	);
+
+	@Query("""
+		select ia.invigilator.id as personId, count(ia) as assignmentCount
+		from InvigilatorAssignment ia
+		join ia.roomAssignment ra
+		where ra.scheduleGroup.id = :groupId
+		and ia.invigilator is not null
+		group by ia.invigilator.id
+		""")
+	List<PersonWorkloadCount> countInvigilatorAssignmentsByScheduleGroupId(@Param("groupId") UUID groupId);
 }

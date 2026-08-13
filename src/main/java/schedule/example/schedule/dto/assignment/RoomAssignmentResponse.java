@@ -10,6 +10,7 @@ import java.util.UUID;
 
 public record RoomAssignmentResponse(
 	UUID id,
+	UUID scheduleGroupId,
 	LocalDate examDate,
 	UUID roomId,
 	String roomName,

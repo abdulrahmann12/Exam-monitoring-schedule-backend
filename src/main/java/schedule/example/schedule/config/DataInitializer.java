@@ -16,6 +16,7 @@ import schedule.example.schedule.entity.enums.ThemeMode;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.repository.SettingsRepository;
 import schedule.example.schedule.security.AdminUserDetailsService;
+import schedule.example.schedule.service.ScheduleGroupSupport;
 
 import java.security.SecureRandom;
 import java.util.Base64;
@@ -32,6 +33,7 @@ public class DataInitializer implements ApplicationRunner {
 	private final DemoProperties demoProperties;
 	private final PasswordEncoder passwordEncoder;
 	private final AdminUserDetailsService adminUserDetailsService;
+	private final ScheduleGroupSupport scheduleGroupSupport;
 
 	public DataInitializer(
 		AdminUserRepository adminUserRepository,
@@ -39,7 +41,8 @@ public class DataInitializer implements ApplicationRunner {
 		BootstrapAdminProperties bootstrapAdminProperties,
 		DemoProperties demoProperties,
 		PasswordEncoder passwordEncoder,
-		AdminUserDetailsService adminUserDetailsService
+		AdminUserDetailsService adminUserDetailsService,
+		ScheduleGroupSupport scheduleGroupSupport
 	) {
 		this.adminUserRepository = adminUserRepository;
 		this.settingsRepository = settingsRepository;
@@ -47,6 +50,7 @@ public class DataInitializer implements ApplicationRunner {
 		this.demoProperties = demoProperties;
 		this.passwordEncoder = passwordEncoder;
 		this.adminUserDetailsService = adminUserDetailsService;
+		this.scheduleGroupSupport = scheduleGroupSupport;
 	}
 
 	@Override
@@ -119,9 +123,11 @@ public class DataInitializer implements ApplicationRunner {
 			settings.setTheme(ThemeMode.LIGHT);
 			settings.setUniversityName("University");
 			settings.setDepartment(null);
-			settings.setExamPeriod("Current Semester");
+			settings.setExamPeriod(ApplicationDefaults.DEFAULT_EXAM_PERIOD);
 			settingsRepository.save(settings);
 		}
+
+		scheduleGroupSupport.ensureDefaultGroupAndAttachOrphans();
 	}
 
 	private String requireConfiguredValue(String value, String propertyName) {

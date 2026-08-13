@@ -11,6 +11,7 @@ import schedule.example.schedule.entity.RoomAssignment;
 @Mapper(config = CentralMapperConfig.class, uses = InvigilatorAssignmentMapper.class)
 public interface RoomAssignmentMapper {
 
+	@Mapping(target = "scheduleGroupId", source = "scheduleGroup.id")
 	@Mapping(target = "roomId", source = "room.id")
 	@Mapping(target = "roomName", source = "room.name")
 	@Mapping(target = "timeSlotId", source = "timeSlot.id")
@@ -23,6 +24,7 @@ public interface RoomAssignmentMapper {
 	RoomAssignmentResponse toResponse(RoomAssignment assignment);
 
 	@Mapping(target = "id", ignore = true)
+	@Mapping(target = "scheduleGroup", ignore = true)
 	@Mapping(target = "room", ignore = true)
 	@Mapping(target = "timeSlot", ignore = true)
 	@Mapping(target = "chiefInvigilator", ignore = true)
@@ -32,6 +34,7 @@ public interface RoomAssignmentMapper {
 	@Mapping(target = "updatedAt", ignore = true)
 	RoomAssignment toEntity(RoomAssignmentRequest request);
 
+	@Mapping(target = "scheduleGroup", ignore = true)
 	@Mapping(target = "room", ignore = true)
 	@Mapping(target = "timeSlot", ignore = true)
 	@Mapping(target = "chiefInvigilator", ignore = true)

@@ -57,6 +57,7 @@ public class AssignmentController {
 		@RequestParam(defaultValue = "20") int size,
 		@RequestParam(defaultValue = "examDate") String sortBy,
 		@RequestParam(defaultValue = "ASC") Sort.Direction direction,
+		@RequestParam(required = false) UUID scheduleGroupId,
 		@RequestParam(required = false) UUID slotId,
 		@RequestParam(required = false) UUID roomId,
 		@RequestParam(required = false) Boolean locked,
@@ -64,7 +65,7 @@ public class AssignmentController {
 		@RequestParam(required = false) LocalDate toDate
 	) {
 		Pageable pageable = pageRequestFactory.create(page, size, sortBy, direction, ALLOWED_SORTS);
-		return assignmentService.getAssignments(slotId, roomId, locked, fromDate, toDate, pageable);
+		return assignmentService.getAssignments(scheduleGroupId, slotId, roomId, locked, fromDate, toDate, pageable);
 	}
 
 	@PostMapping

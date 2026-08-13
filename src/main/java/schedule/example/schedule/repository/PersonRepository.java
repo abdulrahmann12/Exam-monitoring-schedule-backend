@@ -61,6 +61,8 @@ public interface PersonRepository extends JpaRepository<Person, UUID> {
 
 	Optional<Person> findByNormalizedName(String normalizedName);
 
+	Optional<Person> findByEmailIgnoreCase(String email);
+
 	/**
 	 * Loads people whose normalizedName has not been set yet — used for the one-time backfill.
 	 * Pageable limits the result to a fixed batch size so the entire table is never loaded into

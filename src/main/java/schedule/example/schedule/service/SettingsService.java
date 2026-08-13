@@ -26,10 +26,12 @@ public class SettingsService {
 	private final SettingsRepository settingsRepository;
 	private final SettingsMapper settingsMapper;
 	private final DemoModeService demoModeService;
+	private final ScheduleGroupSupport scheduleGroupSupport;
 
 	@Cacheable(value = CacheConfig.CACHE_SETTINGS, key = "'settings'")
 	public SettingsResponse getSettings() {
-		return settingsMapper.toResponse(getOrCreateSettingsEntity());
+		Settings settings = getOrCreateSettingsEntity();
+		return withActiveGroupExamPeriod(settingsMapper.toResponse(settings));
 	}
 
 	@Transactional
@@ -39,7 +41,8 @@ public class SettingsService {
 		Settings settings = getOrCreateSettingsEntity();
 		settingsMapper.updateEntity(request, settings);
 		settings.setId(ApplicationDefaults.DEFAULT_SETTINGS_ID);
-		return settingsMapper.toResponse(settingsRepository.save(settings));
+		scheduleGroupSupport.syncDefaultGroupName(request.examPeriod());
+		return withActiveGroupExamPeriod(settingsMapper.toResponse(settingsRepository.save(settings)));
 	}
 
 	private Settings getOrCreateSettingsEntity() {
@@ -53,8 +56,22 @@ public class SettingsService {
 				settings.setTheme(ThemeMode.LIGHT);
 				settings.setUniversityName("University");
 				settings.setDepartment(null);
-				settings.setExamPeriod("Current Semester");
+				settings.setExamPeriod(ApplicationDefaults.DEFAULT_EXAM_PERIOD);
 				return settingsRepository.save(settings);
 			});
+	}
+
+	private SettingsResponse withActiveGroupExamPeriod(SettingsResponse response) {
+		String examPeriod = scheduleGroupSupport.getOrCreateDefaultGroup().getName();
+		return new SettingsResponse(
+			response.id(),
+			response.systemName(),
+			response.appTagline(),
+			response.logoUrl(),
+			response.theme(),
+			response.universityName(),
+			response.department(),
+			examPeriod
+		);
 	}
 }
