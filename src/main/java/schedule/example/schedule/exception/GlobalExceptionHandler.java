@@ -1,12 +1,19 @@
 package schedule.example.schedule.exception;
 
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.validation.ConstraintViolationException;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -14,19 +21,12 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
-import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.dao.TransientDataAccessException;
-import org.springframework.orm.jpa.JpaSystemException;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.common.ApiErrorResponse;
 import schedule.example.schedule.dto.common.FieldValidationError;
-
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * Centralized REST exception handler.
@@ -117,6 +117,21 @@ public class GlobalExceptionHandler {
 			.toList();
 
 		return buildErrorResponse(HttpStatus.BAD_REQUEST, Messages.VALIDATION_FAILED, request, fieldErrors);
+	}
+
+	// ── 400 BAD REQUEST — bulk row validation ─────────────────────────────────
+
+	/** Handles row-numbered bulk upload failures (e.g. schedule bulk upload). Each invalid row becomes one field error keyed by "Row {n}". */
+	@ExceptionHandler(BulkRowValidationException.class)
+	public ResponseEntity<ApiErrorResponse> handleBulkRowValidation(
+		BulkRowValidationException ex,
+		HttpServletRequest request
+	) {
+		List<FieldValidationError> rowErrors = ex.getRowErrors().stream()
+			.map(error -> new FieldValidationError("Row " + error.row(), error.message()))
+			.toList();
+
+		return buildErrorResponse(HttpStatus.BAD_REQUEST, safeMessage(ex), request, rowErrors);
 	}
 
 	// ── 405 METHOD NOT ALLOWED ────────────────────────────────────────────────

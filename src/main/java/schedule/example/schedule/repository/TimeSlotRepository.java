@@ -1,5 +1,9 @@
 package schedule.example.schedule.repository;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.UUID;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -9,10 +13,6 @@ import org.springframework.data.repository.query.Param;
 
 import schedule.example.schedule.entity.ScheduleGroup;
 import schedule.example.schedule.entity.TimeSlot;
-
-import java.util.Collection;
-import java.util.List;
-import java.util.UUID;
 
 public interface TimeSlotRepository extends JpaRepository<TimeSlot, UUID> {
 
@@ -28,6 +28,9 @@ public interface TimeSlotRepository extends JpaRepository<TimeSlot, UUID> {
                 @Param("activeOnly") Boolean activeOnly,
                 Pageable pageable
         );
+
+	/** Active time slots for a group, ordered for display — used by the bulk schedule upload template/validation. */
+	List<TimeSlot> findByScheduleGroupIdAndActiveTrueOrderBySortOrderAsc(UUID scheduleGroupId);
 
 	@Modifying(clearAutomatically = true, flushAutomatically = true)
 	@Query("update TimeSlot ts set ts.scheduleGroup = :group where ts.scheduleGroup is null")

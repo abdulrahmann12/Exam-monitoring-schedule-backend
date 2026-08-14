@@ -135,5 +135,32 @@ public final class Messages {
 	public static final String ASSIGNMENT_SLOT_GROUP_MISMATCH = "Time slot does not belong to schedule group ''{0}''.";
 	public static final String ASSIGNMENT_BULK_MIXED_GROUPS = "Bulk save cannot mix assignments from different schedule groups.";
 	public static final String ASSIGNMENT_GROUP_REQUIRED = "Assignment is missing a schedule group.";
+
+	// ==================== Schedule Bulk Upload Messages ====================
+	/** Returned when the uploaded workbook has no data rows to import. */
+	public static final String SCHEDULE_BULK_UPLOAD_EMPTY = "The uploaded workbook contains headers only or no data rows.";
+	/** Top-level message when one or more rows fail validation. Accepts the failed row count as argument 0. */
+	public static final String SCHEDULE_BULK_UPLOAD_ROW_ERRORS = "Bulk schedule upload failed: {0} row(s) contain errors. No changes were saved.";
+	/** Row error: the Date cell could not be parsed. */
+	public static final String SCHEDULE_BULK_ROW_DATE_REQUIRED = "Date is required.";
+	public static final String SCHEDULE_BULK_ROW_DATE_INVALID = "Invalid date ''{0}''. Expected format is YYYY-MM-DD.";
+	/** Row error: the Time Slot cell could not be parsed or matched. */
+	public static final String SCHEDULE_BULK_ROW_SLOT_REQUIRED = "Time Slot is required.";
+	public static final String SCHEDULE_BULK_ROW_SLOT_INVALID_FORMAT = "Invalid time slot ''{0}''. Expected format is HH:mm - HH:mm, selected from the dropdown.";
+	public static final String SCHEDULE_BULK_ROW_SLOT_NOT_FOUND = "Time slot ''{0}'' does not exist (or is inactive) for this schedule group.";
+	/** Row error: the Room cell could not be matched. */
+	public static final String SCHEDULE_BULK_ROW_ROOM_REQUIRED = "Room is required.";
+	public static final String SCHEDULE_BULK_ROW_ROOM_NOT_FOUND = "Room ''{0}'' does not exist or is inactive.";
+	/** Row error: subject name/code exceed the column length limits. */
+	public static final String SCHEDULE_BULK_ROW_SUBJECT_NAME_TOO_LONG = "Subject Name must be at most 160 characters.";
+	public static final String SCHEDULE_BULK_ROW_SUBJECT_CODE_TOO_LONG = "Subject Code must be at most 40 characters.";
+	/** Row error: the same date/time slot/room triple appears more than once. */
+	public static final String SCHEDULE_BULK_ROW_DUPLICATE_IN_FILE = "Duplicate row: the same date, time slot, and room already appears in row {0}.";
+	/** Row error: an assignment already exists in the database for this date/time slot/room. */
+	public static final String SCHEDULE_BULK_ROW_ALREADY_EXISTS = "An assignment already exists for this date, time slot, and room.";
+	/** Returned when generating a template for a group that has no time slots yet. */
+	public static final String SCHEDULE_BULK_TEMPLATE_NO_SLOTS = "This schedule group has no time slots yet. Create at least one time slot before generating a bulk upload template.";
+	/** Returned when generating a template while no active rooms exist. */
+	public static final String SCHEDULE_BULK_TEMPLATE_NO_ROOMS = "No active rooms exist. Add at least one active room before generating a bulk upload template.";
 }
 

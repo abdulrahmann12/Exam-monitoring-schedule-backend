@@ -1,9 +1,16 @@
 package schedule.example.schedule.controller;
 
-import jakarta.validation.Valid;
+import java.util.Set;
+import java.util.UUID;
+
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,35 +21,40 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import jakarta.validation.Valid;
 import schedule.example.schedule.config.PageRequestFactory;
+import schedule.example.schedule.dto.bulk.ScheduleBulkUploadResultDTO;
 import schedule.example.schedule.dto.common.PageResponse;
 import schedule.example.schedule.dto.schedulegroup.ScheduleGroupRequest;
 import schedule.example.schedule.dto.schedulegroup.ScheduleGroupResponse;
 import schedule.example.schedule.dto.schedulegroup.ScheduleNotifyResponse;
+import schedule.example.schedule.service.ScheduleBulkUploadService;
 import schedule.example.schedule.service.ScheduleGroupService;
 import schedule.example.schedule.service.ScheduleNotificationService;
-
-import java.util.Set;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/schedule-groups")
 public class ScheduleGroupController {
 
 	private static final Set<String> ALLOWED_SORTS = Set.of("id", "name", "active", "createdAt", "updatedAt");
+	private static final String XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 	private final ScheduleGroupService scheduleGroupService;
 	private final ScheduleNotificationService scheduleNotificationService;
+	private final ScheduleBulkUploadService scheduleBulkUploadService;
 	private final PageRequestFactory pageRequestFactory;
 
 	public ScheduleGroupController(
 		ScheduleGroupService scheduleGroupService,
 		ScheduleNotificationService scheduleNotificationService,
+		ScheduleBulkUploadService scheduleBulkUploadService,
 		PageRequestFactory pageRequestFactory
 	) {
 		this.scheduleGroupService = scheduleGroupService;
 		this.scheduleNotificationService = scheduleNotificationService;
+		this.scheduleBulkUploadService = scheduleBulkUploadService;
 		this.pageRequestFactory = pageRequestFactory;
 	}
 
@@ -84,5 +96,25 @@ public class ScheduleGroupController {
 	@PostMapping("/{id}/notify")
 	public ScheduleNotifyResponse notifyAssignedStaff(@PathVariable UUID id) {
 		return scheduleNotificationService.notifyAssignedStaff(id);
+	}
+
+	@GetMapping("/{id}/bulk-template")
+	public ResponseEntity<ByteArrayResource> downloadBulkTemplate(@PathVariable UUID id) {
+		byte[] templateBytes = scheduleBulkUploadService.createBulkTemplate(id);
+
+		ByteArrayResource resource = new ByteArrayResource(templateBytes);
+		HttpHeaders headers = new HttpHeaders();
+		headers.setContentType(MediaType.parseMediaType(XLSX_CONTENT_TYPE));
+		headers.setContentLength(templateBytes.length);
+		headers.setContentDisposition(ContentDisposition.attachment().filename("schedule-bulk-upload-template.xlsx").build());
+
+		return ResponseEntity.ok()
+			.headers(headers)
+			.body(resource);
+	}
+
+	@PostMapping(value = "/{id}/bulk-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	public ScheduleBulkUploadResultDTO uploadBulkSchedule(@PathVariable UUID id, @RequestParam("file") MultipartFile file) {
+		return scheduleBulkUploadService.uploadBulkSchedule(id, file);
 	}
 }

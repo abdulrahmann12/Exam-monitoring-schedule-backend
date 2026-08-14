@@ -1,5 +1,11 @@
 package schedule.example.schedule.repository;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -9,17 +15,14 @@ import org.springframework.data.repository.query.Param;
 import schedule.example.schedule.entity.Room;
 import schedule.example.schedule.entity.enums.RoomType;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
-
 public interface RoomRepository extends JpaRepository<Room, UUID> {
 
 	long countByActiveTrue();
 
 	Optional<Room> findByNormalizedName(String normalizedName);
+
+	/** All active rooms ordered by name — used to build the bulk schedule upload template/validation. */
+	List<Room> findAllByActiveTrueOrderByNameAsc();
 
 	/**
 	 * Loads rooms whose normalizedName has not been set — used for one-time backfill.

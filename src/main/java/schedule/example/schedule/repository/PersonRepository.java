@@ -1,5 +1,11 @@
 package schedule.example.schedule.repository;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -10,15 +16,12 @@ import org.springframework.data.repository.query.Param;
 import schedule.example.schedule.entity.Person;
 import schedule.example.schedule.entity.enums.PersonRole;
 
-import java.util.Collection;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
-
 public interface PersonRepository extends JpaRepository<Person, UUID> {
 
 	long countByRoleAndActiveTrue(PersonRole role);
+
+	/** Active candidates for a role — used by the schedule auto-assignment algorithm. */
+	List<Person> findAllByRoleAndActiveTrue(PersonRole role);
 
 	@Query("""
 			select p from Person p

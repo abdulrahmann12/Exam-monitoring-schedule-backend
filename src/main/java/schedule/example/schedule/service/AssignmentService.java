@@ -1,7 +1,18 @@
 package schedule.example.schedule.service;
 
-import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
+import java.text.MessageFormat;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
@@ -10,6 +21,8 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.assignment.BulkRoomAssignmentRequest;
 import schedule.example.schedule.dto.assignment.RoomAssignmentRequest;
@@ -33,20 +46,6 @@ import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.RoomRepository;
 import schedule.example.schedule.repository.TimeSlotRepository;
 
-import java.text.MessageFormat;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
 @Service
 @Validated
 @RequiredArgsConstructor
@@ -60,6 +59,7 @@ public class AssignmentService {
     private final RoomAssignmentMapper roomAssignmentMapper;
     private final DemoModeService demoModeService;
     private final ScheduleGroupSupport scheduleGroupSupport;
+    private final StaffConcurrencyRules staffConcurrencyRules;
 
 
     public PageResponse<RoomAssignmentResponse> getAssignments(
@@ -79,7 +79,7 @@ public class AssignmentService {
         validateAssignmentRules(assignment, null);
 
         RoomAssignment saved = roomAssignmentRepository.save(assignment);
-        applyWorkloadDelta(Map.of(), countAssignmentOccurrences(saved));
+        staffConcurrencyRules.applyWorkloadDelta(Map.of(), StaffConcurrencyRules.countAssignmentOccurrences(saved));
 
         // Map directly from the already-populated entity — no redundant EntityGraph re-fetch.
         return roomAssignmentMapper.toResponse(saved);
@@ -89,14 +89,14 @@ public class AssignmentService {
     public RoomAssignmentResponse updateAssignment(UUID id, @Valid RoomAssignmentRequest request) {
         // Fetch once with full EntityGraph — all relations are in the session.
         RoomAssignment assignment = getDetailedAssignment(id);
-        Map<UUID, Integer> previousOccurrences = countAssignmentOccurrences(assignment);
+        Map<UUID, Integer> previousOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(assignment);
 
         roomAssignmentMapper.updateEntity(request, assignment);
         configureAssignmentRelations(assignment, request);
         validateAssignmentRules(assignment, id);
 
         roomAssignmentRepository.save(assignment);
-        applyWorkloadDelta(previousOccurrences, countAssignmentOccurrences(assignment));
+        staffConcurrencyRules.applyWorkloadDelta(previousOccurrences, StaffConcurrencyRules.countAssignmentOccurrences(assignment));
 
         // Relations are still in the session from the initial fetch — map directly, no re-fetch.
         return roomAssignmentMapper.toResponse(assignment);
@@ -119,7 +119,7 @@ public class AssignmentService {
 
         validateRequestKeys(requests);
 
-        Map<UUID, Integer> previousOccurrences = countAssignmentOccurrences(existingAssignments);
+        Map<UUID, Integer> previousOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(existingAssignments);
         List<RoomAssignment> preparedAssignments = new ArrayList<>(requests.size());
 
         for (BulkRoomAssignmentRequest request : requests) {
@@ -146,8 +146,8 @@ public class AssignmentService {
         // saveAll() sends batched INSERTs/UPDATEs in groups of hibernate.jdbc.batch_size (50).
         List<RoomAssignment> savedAssignments = roomAssignmentRepository.saveAll(preparedAssignments);
 
-        Map<UUID, Integer> nextOccurrences = countAssignmentOccurrences(savedAssignments);
-        applyWorkloadDelta(previousOccurrences, nextOccurrences);
+        Map<UUID, Integer> nextOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(savedAssignments);
+        staffConcurrencyRules.applyWorkloadDelta(previousOccurrences, nextOccurrences);
 
         // Map directly from the in-session entities — all relations already populated by
         // configureBulkAssignmentRelations(). Avoids the previous redundant EntityGraph re-fetch.
@@ -161,9 +161,9 @@ public class AssignmentService {
     public void deleteAssignment(UUID id) {
         demoModeService.rejectIfDemoUser("delete-assignment");
         RoomAssignment assignment = getDetailedAssignment(id);
-        Map<UUID, Integer> previousOccurrences = countAssignmentOccurrences(assignment);
+        Map<UUID, Integer> previousOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(assignment);
         roomAssignmentRepository.delete(assignment);
-        applyWorkloadDelta(previousOccurrences, Map.of());
+        staffConcurrencyRules.applyWorkloadDelta(previousOccurrences, Map.of());
     }
 
     // ─── Private helpers ────────────────────────────────────────────────────────
@@ -535,7 +535,7 @@ public class AssignmentService {
         if (assignment.getChiefInvigilator() != null) {
             Person chief = assignment.getChiefInvigilator();
             validateAvailability(chief, examDate, true);
-            int overlapping = countOverlappingChiefRooms(universe, assignment, chief.getId());
+            int overlapping = StaffConcurrencyRules.countOverlappingChiefRooms(universe, assignment, chief.getId());
             if (overlapping >= chief.getMaxParallelRooms()) {
                 throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_CHIEF_LIMIT, chief.getName()));
             }
@@ -551,147 +551,18 @@ public class AssignmentService {
             }
             Person invigilator = ia.getInvigilator();
             validateAvailability(invigilator, examDate, false);
-            if (countOverlappingInvigilatorRooms(universe, assignment, invigilator.getId()) >= 1) {
+            if (StaffConcurrencyRules.countOverlappingInvigilatorRooms(universe, assignment, invigilator.getId()) >= 1) {
                 throw new ConflictException(MessageFormat.format(
                         Messages.ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED, invigilator.getName()));
             }
         }
     }
 
-    private static int countOverlappingChiefRooms(
-            List<RoomAssignment> universe,
-            RoomAssignment current,
-            UUID chiefId
-    ) {
-        int count = 0;
-        for (RoomAssignment other : universe) {
-            if (other == current) {
-                continue;
-            }
-            if (!current.getExamDate().equals(other.getExamDate())) {
-                continue;
-            }
-            if (other.getChiefInvigilator() == null || !chiefId.equals(other.getChiefInvigilator().getId())) {
-                continue;
-            }
-            if (overlaps(current.getTimeSlot(), other.getTimeSlot())) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private static int countOverlappingInvigilatorRooms(
-            List<RoomAssignment> universe,
-            RoomAssignment current,
-            UUID invigilatorId
-    ) {
-        int count = 0;
-        for (RoomAssignment other : universe) {
-            if (other == current) {
-                continue;
-            }
-            if (!current.getExamDate().equals(other.getExamDate())) {
-                continue;
-            }
-            if (!overlaps(current.getTimeSlot(), other.getTimeSlot()) || other.getInvigilatorAssignments() == null) {
-                continue;
-            }
-            for (InvigilatorAssignment ia : other.getInvigilatorAssignments()) {
-                if (ia.getInvigilator() != null && invigilatorId.equals(ia.getInvigilator().getId())) {
-                    count++;
-                    break;
-                }
-            }
-        }
-        return count;
-    }
-
-    /**
-     * Two slots overlap when each starts before the other ends:
-     * {@code A.start < B.end && A.end > B.start}.
-     */
-    static boolean overlaps(TimeSlot left, TimeSlot right) {
-        if (left == null || right == null || left.getStartTime() == null || left.getEndTime() == null
-                || right.getStartTime() == null || right.getEndTime() == null) {
-            return false;
-        }
-        return left.getStartTime().isBefore(right.getEndTime())
-                && left.getEndTime().isAfter(right.getStartTime());
-    }
-
     private void validateAvailability(Person person, LocalDate examDate, boolean isChief) {
+        if (StaffConcurrencyRules.isAvailable(person, examDate)) return;
         WeekDay required = WeekDay.from(examDate.getDayOfWeek());
-        if (person.getAvailableDays().contains(required)) return;
         String pattern = isChief ? Messages.ASSIGNMENT_CHIEF_UNAVAILABLE : Messages.ASSIGNMENT_INVIGILATOR_UNAVAILABLE;
         throw new ConflictException(MessageFormat.format(pattern, person.getName(), required.getValue(), examDate));
-    }
-
-    private Map<UUID, Integer> countAssignmentOccurrences(RoomAssignment assignment) {
-        Map<UUID, Integer> counts = new HashMap<>();
-        if (assignment.getChiefInvigilator() != null) {
-            counts.merge(assignment.getChiefInvigilator().getId(), 1, Integer::sum);
-        }
-        for (InvigilatorAssignment ia : assignment.getInvigilatorAssignments()) {
-            if (ia.getInvigilator() != null) {
-                counts.merge(ia.getInvigilator().getId(), 1, Integer::sum);
-            }
-        }
-        return counts;
-    }
-
-    /**
-     * Counts total person occurrences across a collection of assignments.
-     *
-     * <p><strong>Fix:</strong> Removed the unnecessary {@code .sorted(Comparator.comparing(...))}
-     * call from the previous implementation. Summing counts is commutative — ordering has no
-     * effect on the result, and sorting added O(n log n) overhead for zero benefit.
-     */
-    private Map<UUID, Integer> countAssignmentOccurrences(Collection<RoomAssignment> assignments) {
-        Map<UUID, Integer> counts = new HashMap<>();
-        for (RoomAssignment assignment : assignments) {
-            countAssignmentOccurrences(assignment)
-                .forEach((personId, value) -> counts.merge(personId, value, Integer::sum));
-        }
-        return counts;
-    }
-
-    /**
-     * Updates {@code totalAssignments} for all affected persons using a single batch operation.
-     *
-     * <p><strong>Performance fix:</strong> the previous implementation called
-     * {@code personRepository.adjustTotalAssignments(personId, delta)} once per person in a loop,
-     * issuing N individual UPDATE round-trips. This version:
-     * <ol>
-     *   <li>Computes net deltas in memory (no DB call).</li>
-     *   <li>Loads all affected persons in a single {@code SELECT ... IN} query.</li>
-     *   <li>Updates {@code totalAssignments} in-memory for each person.</li>
-     *   <li>Calls {@code saveAll()} which sends all UPDATEs as a single JDBC batch
-     *       (requires {@code hibernate.jdbc.batch_size=50} + {@code rewriteBatchedStatements=true}
-     *       in the JDBC URL — both configured in application.properties).</li>
-     * </ol>
-     * Result: N DB round-trips → 1 SELECT + 1 batched UPDATE round-trip.
-     */
-    private void applyWorkloadDelta(Map<UUID, Integer> before, Map<UUID, Integer> after) {
-        Map<UUID, Integer> netDeltas = new HashMap<>();
-        Set<UUID> allIds = new HashSet<>(before.keySet());
-        allIds.addAll(after.keySet());
-
-        for (UUID personId : allIds) {
-            int delta = after.getOrDefault(personId, 0) - before.getOrDefault(personId, 0);
-            if (delta != 0) netDeltas.put(personId, delta);
-        }
-
-        if (netDeltas.isEmpty()) return;
-
-        List<Person> people = personRepository.findAllById(netDeltas.keySet());
-        for (Person person : people) {
-            Integer delta = netDeltas.get(person.getId());
-            if (delta != null) {
-                person.setTotalAssignments(person.getTotalAssignments() + delta);
-            }
-        }
-        personRepository.saveAll(people);
     }
 
     private record AssignmentCompositeKey(LocalDate examDate, UUID slotId, UUID roomId) {

@@ -49,6 +49,7 @@ import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 @Service
 @Validated
@@ -60,6 +61,8 @@ public class BulkUploadService {
 	private static final int MAX_SAVE_RETRIES = 3;
 	private static final int PERSON_NAME_MAX_LENGTH = 160;
 	private static final int PERSON_DEPARTMENT_MAX_LENGTH = 160;
+	private static final int PERSON_EMAIL_MAX_LENGTH = 255;
+	private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
 	private static final int ROOM_NAME_MAX_LENGTH = 120;
 	private static final String DEFAULT_PERSON_DEPARTMENT = "General";
 	private static final Set<WeekDay> DEFAULT_PERSON_AVAILABLE_DAYS = EnumSet.of(
@@ -92,7 +95,8 @@ public class BulkUploadService {
 				values.getString(0),
 				values.getString(1),
 				values.getString(2),
-				values.getString(3)
+				values.getString(3),
+				values.getString(4)
 			)
 		);
 
@@ -164,10 +168,10 @@ public class BulkUploadService {
 	public byte[] createPersonsTemplate() {
 		return createWorkbook(
 			"Persons",
-			List.of("Name", "Type", "Department (optional)", "Available Days (optional, comma-separated)"),
+			List.of("Name", "Type", "Email (optional)", "Department (optional)", "Available Days (optional, comma-separated)"),
 			List.of(
-				List.of("Ahmed Ali", "CHIEF_INVIGILATOR", "Mathematics", "Sun, Mon, Tue, Wed, Thu"),
-				List.of("Sara Hassan", "INVIGILATOR", "Physics", "Sun, Tue, Thu")
+				List.of("Ahmed Ali", "CHIEF_INVIGILATOR", "ahmed.ali@example.com", "Mathematics", "Sun, Mon, Tue, Wed, Thu"),
+				List.of("Sara Hassan", "INVIGILATOR", "sara.hassan@example.com", "Physics", "Sun, Tue, Thu")
 			),
 			sheet -> addDropdownValidation(sheet, 1, 5000, 1, 1, enumNames(PersonRole.values()))
 		);
@@ -199,6 +203,17 @@ public class BulkUploadService {
 			errors.add("Invalid type. Expected CHIEF_INVIGILATOR or INVIGILATOR.");
 		}
 
+		String email = NameNormalizationUtil.normalizeWhitespace(source.email());
+		if (email != null && !email.isBlank()) {
+			if (email.length() > PERSON_EMAIL_MAX_LENGTH) {
+				errors.add("Email must be at most 255 characters.");
+			} else if (!EMAIL_PATTERN.matcher(email).matches()) {
+				errors.add("Invalid email format.");
+			}
+		} else {
+			email = null;
+		}
+
 		String department = defaultIfBlank(NameNormalizationUtil.normalizeWhitespace(source.department()), DEFAULT_PERSON_DEPARTMENT);
 		if (department.length() > PERSON_DEPARTMENT_MAX_LENGTH) {
 			errors.add("Department must be at most 160 characters.");
@@ -209,7 +224,7 @@ public class BulkUploadService {
 			return ValidationService.RowValidationResult.failure(errors);
 		}
 
-		return ValidationService.RowValidationResult.success(new PersonImportCommand(name, role.orElseThrow(), department, availableDays));
+		return ValidationService.RowValidationResult.success(new PersonImportCommand(name, role.orElseThrow(), email, department, availableDays));
 	}
 
 	private ValidationService.RowValidationResult<RoomImportCommand> validateRoomRow(RoomImportSource source) {
@@ -392,6 +407,7 @@ public class BulkUploadService {
 		Person person = new Person();
 		person.setName(resolvedName);
 		person.setDepartment(command.department());
+		person.setEmail(command.email());
 		person.setRole(command.role());
 		person.setAvailableDays(new LinkedHashSet<>(command.availableDays()));
 		person.setTotalAssignments(0);
@@ -492,7 +508,8 @@ public class BulkUploadService {
 		DataValidationConstraint constraint = helper.createExplicitListConstraint(values);
 		CellRangeAddressList addressList = new CellRangeAddressList(firstRow, lastRow, firstColumn, lastColumn);
 		DataValidation validation = helper.createValidation(constraint, addressList);
-		validation.setSuppressDropDownArrow(false);
+		validation.setSuppressDropDownArrow(true);
+		validation.setShowErrorBox(true);
 		validation.createErrorBox("Invalid value", "Please select a value from the dropdown list.");
 		sheet.addValidationData(validation);
 	}
@@ -509,10 +526,10 @@ public class BulkUploadService {
 		void customize(Sheet sheet);
 	}
 
-	private record PersonImportSource(String name, String type, String department, String availableDays) {
+	private record PersonImportSource(String name, String type, String email, String department, String availableDays) {
 	}
 
-	private record PersonImportCommand(String name, PersonRole role, String department, Set<WeekDay> availableDays) {
+	private record PersonImportCommand(String name, PersonRole role, String email, String department, Set<WeekDay> availableDays) {
 	}
 
 	private record RoomImportSource(String name, String capacity, String type, String minInvigilators) {
