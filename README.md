@@ -83,9 +83,22 @@ validates it (`ddl-auto=validate`).
 
 ### Run the application
 
+**Against MySQL** — set the variables from `.env.example`, then:
+
 ```powershell
 mvn spring-boot:run
 ```
+
+**Locally without MySQL** (H2 file database in `./data`, demo enabled,
+admin `admin@local.test` / `LocalAdmin123` — see `src/test/resources/application-local.properties`):
+
+```bash
+mvn -q dependency:build-classpath -Dmdep.includeScope=test -Dmdep.outputFile=target/cp.txt
+mvn -q test-compile
+java -cp "target/test-classes;target/classes;$(cat target/cp.txt)" schedule.example.schedule.ScheduleApplication --spring.profiles.active=local
+```
+
+(On macOS/Linux use `:` instead of `;` in the classpath.) The frontend dev server proxies `/api` to `http://localhost:8080`.
 
 ### Run on a different port
 
