@@ -22,6 +22,11 @@ import schedule.example.schedule.repository.TimeSlotRepository;
 
 import java.text.MessageFormat;
 import java.util.UUID;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+import schedule.example.schedule.entity.RoomAssignment;
 
 @Service
 @Validated
@@ -34,6 +39,8 @@ public class TimeSlotService {
     private final TimeSlotMapper timeSlotMapper;
     private final DemoModeService demoModeService;
     private final ScheduleGroupSupport scheduleGroupSupport;
+    private final ScheduleWriteLock scheduleWriteLock;
+    private final SchedulingContextLoader contextLoader;
 
     public PageResponse<TimeSlotResponse> getTimeSlots(UUID scheduleGroupId, String label, Boolean activeOnly, Pageable pageable) {
         UUID groupId = scheduleGroupSupport.requireGroup(scheduleGroupId).getId();
@@ -59,7 +66,15 @@ public class TimeSlotService {
                 && !request.scheduleGroupId().equals(timeSlot.getScheduleGroup().getId())) {
             throw new ConflictException(Messages.SLOT_CANNOT_CHANGE_GROUP);
         }
+        boolean timesChanged = !request.startTime().equals(timeSlot.getStartTime())
+                || !request.endTime().equals(timeSlot.getEndTime());
+        if (timesChanged) {
+            scheduleWriteLock.acquire();
+        }
         timeSlotMapper.updateEntity(request, timeSlot);
+        if (timesChanged) {
+            revalidateAssignmentsUsing(timeSlot);
+        }
         return timeSlotMapper.toResponse(timeSlotRepository.save(timeSlot));
     }
 
@@ -82,6 +97,27 @@ public class TimeSlotService {
         TimeSlot timeSlot = getTimeSlotEntity(id);
         timeSlot.setActive(false);
         return timeSlotMapper.toResponse(timeSlotRepository.save(timeSlot));
+    }
+
+    /**
+     * Moving a slot's start/end can make its assignments overlap others (same room, same staff).
+     * Re-runs the full rule set on every assignment that uses the slot, with the new times applied.
+     */
+    private void revalidateAssignmentsUsing(TimeSlot timeSlot) {
+        List<RoomAssignment> affected = roomAssignmentRepository.findAllDetailedByTimeSlotId(timeSlot.getId());
+        if (affected.isEmpty()) {
+            return;
+        }
+        Set<LocalDate> dates = affected.stream().map(RoomAssignment::getExamDate).collect(Collectors.toSet());
+        SchedulingContext context = contextLoader.load(dates);
+        context.addAll(affected);
+        for (RoomAssignment assignment : affected) {
+            List<String> violations = StaffConcurrencyRules.findViolations(assignment, context);
+            if (!violations.isEmpty()) {
+                throw new ConflictException(MessageFormat.format(Messages.SLOT_TIME_CHANGE_CONFLICT,
+                        assignment.getRoom().getName() + " on " + assignment.getExamDate() + " — " + violations.getFirst()));
+            }
+        }
     }
 
     private TimeSlot getTimeSlotEntity(UUID id) {

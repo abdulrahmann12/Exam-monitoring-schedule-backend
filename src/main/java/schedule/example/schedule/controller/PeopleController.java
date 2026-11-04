@@ -20,8 +20,12 @@ import schedule.example.schedule.dto.common.PageResponse;
 import schedule.example.schedule.dto.person.PersonRequest;
 import schedule.example.schedule.dto.person.PersonResponse;
 import schedule.example.schedule.entity.enums.PersonRole;
+import schedule.example.schedule.dto.unavailability.UnavailabilityRequest;
+import schedule.example.schedule.dto.unavailability.UnavailabilityResponse;
 import schedule.example.schedule.service.PeopleService;
+import schedule.example.schedule.service.UnavailabilityService;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -32,10 +36,16 @@ public class PeopleController {
 	private static final Set<String> ALLOWED_SORTS = Set.of("id", "name", "department", "role", "totalAssignments");
 
 	private final PeopleService peopleService;
+	private final UnavailabilityService unavailabilityService;
 	private final PageRequestFactory pageRequestFactory;
 
-	public PeopleController(PeopleService peopleService, PageRequestFactory pageRequestFactory) {
+	public PeopleController(
+		PeopleService peopleService,
+		UnavailabilityService unavailabilityService,
+		PageRequestFactory pageRequestFactory
+	) {
 		this.peopleService = peopleService;
+		this.unavailabilityService = unavailabilityService;
 		this.pageRequestFactory = pageRequestFactory;
 	}
 
@@ -69,5 +79,24 @@ public class PeopleController {
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void deletePerson(@PathVariable UUID id) {
 		peopleService.deletePerson(id);
+	}
+
+	// ── Date-specific leave ────────────────────────────────────────────────
+
+	@GetMapping("/{id}/unavailability")
+	public List<UnavailabilityResponse> listUnavailability(@PathVariable UUID id) {
+		return unavailabilityService.list(id);
+	}
+
+	@PostMapping("/{id}/unavailability")
+	@ResponseStatus(HttpStatus.CREATED)
+	public UnavailabilityResponse addUnavailability(@PathVariable UUID id, @Valid @RequestBody UnavailabilityRequest request) {
+		return unavailabilityService.create(id, request);
+	}
+
+	@DeleteMapping("/{id}/unavailability/{unavailabilityId}")
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void deleteUnavailability(@PathVariable UUID id, @PathVariable UUID unavailabilityId) {
+		unavailabilityService.delete(id, unavailabilityId);
 	}
 }

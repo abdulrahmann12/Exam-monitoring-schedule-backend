@@ -12,6 +12,7 @@ public record SettingsResponse(
 	ThemeMode theme,
 	String universityName,
 	String department,
-	String examPeriod
+	String examPeriod,
+	int maxDutiesPerDay
 ) {
 }

@@ -9,6 +9,9 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -75,6 +78,27 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.CONFLICT, safeMessage(ex), request);
 	}
 
+
+	/** Two users changed the same row at once (JPA @Version mismatch). */
+	@ExceptionHandler(OptimisticLockingFailureException.class)
+	public ResponseEntity<ApiErrorResponse> handleOptimisticLock(Exception ex, HttpServletRequest request) {
+		log.info("Optimistic lock conflict for {} {}: {}", request.getMethod(), request.getRequestURI(), ex.getMessage());
+		return buildErrorResponse(HttpStatus.CONFLICT, Messages.CONCURRENT_MODIFICATION, request);
+	}
+
+	/** Could not obtain the schedule write lock in time (another long write in progress). */
+	@ExceptionHandler(PessimisticLockingFailureException.class)
+	public ResponseEntity<ApiErrorResponse> handlePessimisticLock(Exception ex, HttpServletRequest request) {
+		log.warn("Lock wait failure for {} {}: {}", request.getMethod(), request.getRequestURI(), ex.getMessage());
+		return buildErrorResponse(HttpStatus.CONFLICT, Messages.SCHEDULE_BUSY, request);
+	}
+
+	/** A database constraint (unique key, foreign key) rejected the write — e.g. a race on a unique name. */
+	@ExceptionHandler(DataIntegrityViolationException.class)
+	public ResponseEntity<ApiErrorResponse> handleDataIntegrity(Exception ex, HttpServletRequest request) {
+		log.warn("Data integrity violation for {} {}: {}", request.getMethod(), request.getRequestURI(), ex.getMessage());
+		return buildErrorResponse(HttpStatus.CONFLICT, Messages.DATA_INTEGRITY_CONFLICT, request);
+	}
 
 	// ── 400 BAD REQUEST ───────────────────────────────────────────────────────
 

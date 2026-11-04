@@ -2,6 +2,7 @@ package schedule.example.schedule.entity;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
+import jakarta.persistence.Version;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
 import jakarta.persistence.EnumType;
@@ -126,6 +127,15 @@ public class RoomAssignment {
         @OneToMany(mappedBy = "roomAssignment", cascade = CascadeType.ALL, orphanRemoval = true)
         @OrderColumn(name = "position_index")
         private List<InvigilatorAssignment> invigilatorAssignments = new ArrayList<>();
+
+
+        /**
+         * Optimistic-locking version. Two concurrent edits of the same row fail with
+         * HTTP 409 instead of silently overwriting each other.
+         */
+        @Version
+        @Column(nullable = false)
+        private long version;
 
         @CreatedDate
         @Column(nullable = false, updatable = false)

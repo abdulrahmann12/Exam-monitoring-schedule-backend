@@ -71,7 +71,8 @@ public class SettingsService {
 			response.theme(),
 			response.universityName(),
 			response.department(),
-			examPeriod
+			examPeriod,
+			response.maxDutiesPerDay()
 		);
 	}
 }

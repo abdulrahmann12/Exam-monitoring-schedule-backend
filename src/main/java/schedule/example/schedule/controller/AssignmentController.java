@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import schedule.example.schedule.config.PageRequestFactory;
 import schedule.example.schedule.dto.assignment.BulkRoomAssignmentRequest;
+import schedule.example.schedule.dto.assignment.GeneratePreviewRequest;
+import schedule.example.schedule.dto.assignment.GeneratePreviewResponse;
 import schedule.example.schedule.dto.assignment.RoomAssignmentRequest;
 import schedule.example.schedule.dto.assignment.RoomAssignmentResponse;
 import schedule.example.schedule.dto.common.PageResponse;
@@ -80,6 +82,15 @@ public class AssignmentController {
 		@Valid @RequestBody List<@Valid BulkRoomAssignmentRequest> requests
 	) {
 		return assignmentService.saveAssignmentsBulk(requests);
+	}
+
+	/**
+	 * Generates staff for one date + time slot using the server's scheduling engine and returns
+	 * the proposal <em>without saving it</em>. The client reviews/edits it, then saves via {@code /bulk}.
+	 */
+	@PostMapping("/generate-preview")
+	public GeneratePreviewResponse generatePreview(@Valid @RequestBody GeneratePreviewRequest request) {
+		return assignmentService.generatePreview(request);
 	}
 
 	@PutMapping("/{id}")

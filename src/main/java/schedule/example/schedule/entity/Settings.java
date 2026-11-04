@@ -47,4 +47,12 @@ public class Settings {
 
 	@Column(nullable = false, length = 120)
 	private String examPeriod;
+
+	/**
+	 * Maximum number of separate (non-overlapping) sittings one person may cover on a single day.
+	 * {@code 0} means unlimited.
+	 */
+	@Builder.Default
+	@Column(name = "max_duties_per_day", nullable = false)
+	private int maxDutiesPerDay = 0;
 }

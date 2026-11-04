@@ -1,6 +1,7 @@
 package schedule.example.schedule.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Version;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
 import jakarta.persistence.FetchType;
@@ -78,6 +79,15 @@ public class TimeSlot {
         @Builder.Default
         @Column(nullable = false)
         private boolean active = true;
+
+
+        /**
+         * Optimistic-locking version. Two concurrent edits of the same row fail with
+         * HTTP 409 instead of silently overwriting each other.
+         */
+        @Version
+        @Column(nullable = false)
+        private long version;
 
         @CreatedDate
         @Column(nullable = false, updatable = false)

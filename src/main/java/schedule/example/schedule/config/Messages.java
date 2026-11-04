@@ -88,6 +88,9 @@ public final class Messages {
 
 	// ==================== Auth Messages ====================
 	public static final String AUTH_INVALID_CREDENTIALS = "Invalid email or password.";
+	public static final String AUTH_CURRENT_PASSWORD_WRONG = "Current password is incorrect.";
+	public static final String MAIL_NOT_CONFIGURED = "Email sending is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL on the server.";
+	public static final String AUTH_PASSWORD_UNCHANGED = "The new password must be different from the current one.";
 
 	// ==================== Demo Mode Messages ====================
 	/** Returned when a demo user attempts a blocked destructive operation. */
@@ -135,6 +138,21 @@ public final class Messages {
 	public static final String ASSIGNMENT_SLOT_GROUP_MISMATCH = "Time slot does not belong to schedule group ''{0}''.";
 	public static final String ASSIGNMENT_BULK_MIXED_GROUPS = "Bulk save cannot mix assignments from different schedule groups.";
 	public static final String ASSIGNMENT_GROUP_REQUIRED = "Assignment is missing a schedule group.";
+	public static final String ASSIGNMENT_ROOM_OVERLAP = "Room ''{0}'' is already booked on {1} at an overlapping time ({2}).";
+	public static final String ASSIGNMENT_CHIEF_ON_LEAVE = "Chief invigilator ''{0}'' is on leave on {1}{2}.";
+	public static final String ASSIGNMENT_INVIGILATOR_ON_LEAVE = "Invigilator ''{0}'' is on leave on {1}{2}.";
+	public static final String ASSIGNMENT_DAILY_LIMIT = "''{0}'' would exceed the limit of {1} duty session(s) on {2}.";
+	public static final String ASSIGNMENT_LOCKED_DELETE = "Room ''{0}'' on {1} is locked. Unlock it before removing it from the schedule.";
+	public static final String ASSIGNMENT_NO_CHIEF_AVAILABLE = "No available chief invigilator for {0}.";
+	public static final String ASSIGNMENT_INVIGILATORS_UNFILLED = "{0} invigilator slot(s) could not be filled for {1}.";
+	public static final String SLOT_TIME_CHANGE_CONFLICT = "Changing this time slot would create a conflict: {0}";
+	public static final String UNAVAILABILITY_INVALID_RANGE = "End date must be on or after start date.";
+	public static final String UNAVAILABILITY_NOT_FOUND = "Unavailability period with id {0} was not found.";
+	public static final String UNAVAILABILITY_CONFLICT = "''{0}'' already has assignments on: {1}. Reassign those duties first.";
+	public static final String CONCURRENT_MODIFICATION = "This record was changed by another user at the same time. Reload and try again.";
+	public static final String DATA_INTEGRITY_CONFLICT = "The change conflicts with existing data (duplicate or still-referenced record). Reload and try again.";
+	public static final String SCHEDULE_BUSY = "The schedule is being updated by another user. Please try again in a moment.";
+	public static final String SCHEDULE_BULK_ROW_ROOM_OVERLAP = "Room is already booked at an overlapping time on this date ({0}).";
 
 	// ==================== Schedule Bulk Upload Messages ====================
 	/** Returned when the uploaded workbook has no data rows to import. */

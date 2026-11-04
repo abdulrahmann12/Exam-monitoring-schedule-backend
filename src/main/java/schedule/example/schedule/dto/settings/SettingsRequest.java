@@ -1,5 +1,7 @@
 package schedule.example.schedule.dto.settings;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -29,6 +31,11 @@ public record SettingsRequest(
 
 	@NotBlank(message = "Exam period is required")
 	@Size(max = 120, message = "Exam period must be at most 120 characters")
-	String examPeriod
+	String examPeriod,
+
+	/** Max separate duty sessions per person per day; 0 = unlimited. Omit to keep the current value. */
+	@Min(value = 0, message = "Max duties per day cannot be negative")
+	@Max(value = 12, message = "Max duties per day must be at most 12")
+	Integer maxDutiesPerDay
 ) {
 }

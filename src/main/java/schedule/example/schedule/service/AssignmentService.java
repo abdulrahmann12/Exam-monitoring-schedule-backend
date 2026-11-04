@@ -25,6 +25,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.assignment.BulkRoomAssignmentRequest;
+import schedule.example.schedule.dto.assignment.GeneratePreviewRequest;
+import schedule.example.schedule.dto.assignment.GeneratePreviewResponse;
 import schedule.example.schedule.dto.assignment.RoomAssignmentRequest;
 import schedule.example.schedule.dto.assignment.RoomAssignmentResponse;
 import schedule.example.schedule.dto.common.PageResponse;
@@ -36,7 +38,6 @@ import schedule.example.schedule.entity.ScheduleGroup;
 import schedule.example.schedule.entity.TimeSlot;
 import schedule.example.schedule.entity.enums.AssignmentSource;
 import schedule.example.schedule.entity.enums.PersonRole;
-import schedule.example.schedule.entity.enums.WeekDay;
 import schedule.example.schedule.exception.ConflictException;
 import schedule.example.schedule.exception.NotFoundException;
 import schedule.example.schedule.exception.ValidationException;
@@ -60,6 +61,9 @@ public class AssignmentService {
     private final DemoModeService demoModeService;
     private final ScheduleGroupSupport scheduleGroupSupport;
     private final StaffConcurrencyRules staffConcurrencyRules;
+    private final SchedulingContextLoader contextLoader;
+    private final ScheduleWriteLock scheduleWriteLock;
+    private final AutoAssignmentService autoAssignmentService;
 
 
     public PageResponse<RoomAssignmentResponse> getAssignments(
@@ -74,6 +78,7 @@ public class AssignmentService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public RoomAssignmentResponse createAssignment(@Valid RoomAssignmentRequest request) {
+        scheduleWriteLock.acquire();
         RoomAssignment assignment = roomAssignmentMapper.toEntity(request);
         configureAssignmentRelations(assignment, request);
         validateAssignmentRules(assignment, null);
@@ -87,6 +92,7 @@ public class AssignmentService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public RoomAssignmentResponse updateAssignment(UUID id, @Valid RoomAssignmentRequest request) {
+        scheduleWriteLock.acquire();
         // Fetch once with full EntityGraph — all relations are in the session.
         RoomAssignment assignment = getDetailedAssignment(id);
         Map<UUID, Integer> previousOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(assignment);
@@ -108,6 +114,7 @@ public class AssignmentService {
         if (requests == null || requests.isEmpty()) {
             throw new ValidationException(Messages.ASSIGNMENT_BULK_EMPTY);
         }
+        scheduleWriteLock.acquire();
 
         Map<UUID, Room> roomsById = loadRooms(requests);
         Map<UUID, TimeSlot> timeSlotsById = loadTimeSlots(requests);
@@ -139,6 +146,12 @@ public class AssignmentService {
                 .filter(existing -> !preparedKeys.contains(AssignmentCompositeKey.from(existing)))
                 .toList();
 
+        // Locked rooms are protected: they must be unlocked explicitly before they can disappear.
+        toDelete.stream().filter(RoomAssignment::isLocked).findFirst().ifPresent(locked -> {
+            throw new ConflictException(MessageFormat.format(
+                    Messages.ASSIGNMENT_LOCKED_DELETE, locked.getRoom().getName(), locked.getExamDate()));
+        });
+
         if (!toDelete.isEmpty()) {
             roomAssignmentRepository.deleteAll(toDelete);
         }
@@ -157,9 +170,15 @@ public class AssignmentService {
                 .toList();
     }
 
+    /** Server-side generation of a draft slot (nothing saved) — see {@link AutoAssignmentService#preview}. */
+    public GeneratePreviewResponse generatePreview(@Valid GeneratePreviewRequest request) {
+        return autoAssignmentService.preview(request);
+    }
+
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void deleteAssignment(UUID id) {
         demoModeService.rejectIfDemoUser("delete-assignment");
+        scheduleWriteLock.acquire();
         RoomAssignment assignment = getDetailedAssignment(id);
         Map<UUID, Integer> previousOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(assignment);
         roomAssignmentRepository.delete(assignment);
@@ -480,23 +499,19 @@ public class AssignmentService {
             throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_DUPLICATE_ROOM_SLOT, assignment.getRoom().getName()));
         }
 
-        List<RoomAssignment> sameDay = roomAssignmentRepository
-                .findAllDetailedByScheduleGroupIdAndExamDateIn(groupId, List.of(examDate));
-        List<RoomAssignment> universe = new ArrayList<>();
-        for (RoomAssignment existing : sameDay) {
-            if (existingId == null || !existingId.equals(existing.getId())) {
-                universe.add(existing);
-            }
-        }
-        universe.add(assignment);
-        validateStaffConcurrency(assignment, universe);
+        // Universe = every assignment that day in ALL schedule groups (people and rooms are shared).
+        SchedulingContext context = contextLoader.load(
+                List.of(examDate),
+                existing -> existingId != null && existingId.equals(existing.getId()));
+        context.add(assignment);
+        throwIfViolations(assignment, context);
     }
 
     /**
      * Validates inter-assignment constraints for a bulk operation using real time overlap.
      *
-     * <p>The payload typically replaces one date+slot slice. Other slots on the same date
-     * stay in the database, so they are loaded and included when counting overlapping rooms.
+     * <p>The payload replaces one date+slot slice of one group. Everything else on those dates —
+     * other slots, other schedule groups — stays in the database and is included in the check.
      */
     private void validateBulkAssignmentRules(List<RoomAssignment> assignments, UUID groupId) {
         Set<UUID> groupIds = assignments.stream()
@@ -513,56 +528,22 @@ public class AssignmentService {
                 .map(SlotDayKey::from)
                 .collect(Collectors.toSet());
 
-        List<RoomAssignment> universe = new ArrayList<>();
-        if (!examDates.isEmpty()) {
-            for (RoomAssignment existing : roomAssignmentRepository
-                    .findAllDetailedByScheduleGroupIdAndExamDateIn(groupId, examDates)) {
-                if (!replacedSlots.contains(SlotDayKey.from(existing))) {
-                    universe.add(existing);
-                }
-            }
-        }
-        universe.addAll(assignments);
+        SchedulingContext context = contextLoader.load(examDates, existing ->
+                existing.getScheduleGroup() != null
+                        && groupId.equals(existing.getScheduleGroup().getId())
+                        && replacedSlots.contains(SlotDayKey.from(existing)));
+        context.addAll(assignments);
 
         for (RoomAssignment assignment : assignments) {
-            validateStaffConcurrency(assignment, universe);
+            throwIfViolations(assignment, context);
         }
     }
 
-    private void validateStaffConcurrency(RoomAssignment assignment, List<RoomAssignment> universe) {
-        LocalDate examDate = assignment.getExamDate();
-
-        if (assignment.getChiefInvigilator() != null) {
-            Person chief = assignment.getChiefInvigilator();
-            validateAvailability(chief, examDate, true);
-            int overlapping = StaffConcurrencyRules.countOverlappingChiefRooms(universe, assignment, chief.getId());
-            if (overlapping >= chief.getMaxParallelRooms()) {
-                throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_CHIEF_LIMIT, chief.getName()));
-            }
+    private static void throwIfViolations(RoomAssignment assignment, SchedulingContext context) {
+        List<String> violations = StaffConcurrencyRules.findViolations(assignment, context);
+        if (!violations.isEmpty()) {
+            throw new ConflictException(violations.getFirst());
         }
-
-        if (assignment.getInvigilatorAssignments() == null) {
-            return;
-        }
-
-        for (InvigilatorAssignment ia : assignment.getInvigilatorAssignments()) {
-            if (ia.getInvigilator() == null) {
-                continue;
-            }
-            Person invigilator = ia.getInvigilator();
-            validateAvailability(invigilator, examDate, false);
-            if (StaffConcurrencyRules.countOverlappingInvigilatorRooms(universe, assignment, invigilator.getId()) >= 1) {
-                throw new ConflictException(MessageFormat.format(
-                        Messages.ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED, invigilator.getName()));
-            }
-        }
-    }
-
-    private void validateAvailability(Person person, LocalDate examDate, boolean isChief) {
-        if (StaffConcurrencyRules.isAvailable(person, examDate)) return;
-        WeekDay required = WeekDay.from(examDate.getDayOfWeek());
-        String pattern = isChief ? Messages.ASSIGNMENT_CHIEF_UNAVAILABLE : Messages.ASSIGNMENT_INVIGILATOR_UNAVAILABLE;
-        throw new ConflictException(MessageFormat.format(pattern, person.getName(), required.getValue(), examDate));
     }
 
     private record AssignmentCompositeKey(LocalDate examDate, UUID slotId, UUID roomId) {

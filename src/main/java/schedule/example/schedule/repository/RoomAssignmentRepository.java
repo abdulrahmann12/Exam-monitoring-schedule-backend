@@ -179,5 +179,62 @@ public interface RoomAssignmentRepository extends JpaRepository<RoomAssignment, 
 		@Param("groupId") UUID groupId,
 		@Param("examDates") Collection<LocalDate> examDates
 	);
+
+	/**
+	 * Every assignment on the given dates across <strong>all</strong> schedule groups.
+	 * People and rooms are shared between groups, so conflict checks must see them all.
+	 */
+	@EntityGraph(attributePaths = {
+		"room",
+		"timeSlot",
+		"scheduleGroup",
+		"chiefInvigilator",
+		"invigilatorAssignments",
+		"invigilatorAssignments.invigilator"
+	})
+	@Query("select distinct ra from RoomAssignment ra where ra.examDate in :examDates")
+	List<RoomAssignment> findAllDetailedByExamDateIn(@Param("examDates") Collection<LocalDate> examDates);
+
+	@EntityGraph(attributePaths = {
+		"room",
+		"timeSlot",
+		"chiefInvigilator",
+		"invigilatorAssignments",
+		"invigilatorAssignments.invigilator"
+	})
+	@Query("select distinct ra from RoomAssignment ra where ra.timeSlot.id = :slotId")
+	List<RoomAssignment> findAllDetailedByTimeSlotId(@Param("slotId") UUID slotId);
+
+	/** Chief duty windows in a group — input for minute-based workload fairness. */
+	@Query("""
+		select ra.chiefInvigilator.id as personId, ra.examDate as examDate,
+		       ts.startTime as startTime, ts.endTime as endTime
+		from RoomAssignment ra join ra.timeSlot ts
+		where ra.scheduleGroup.id = :groupId and ra.chiefInvigilator is not null
+		""")
+	List<PersonDutyWindow> findChiefDutyWindowsByScheduleGroupId(@Param("groupId") UUID groupId);
+
+	/** Invigilator duty windows in a group — input for minute-based workload fairness. */
+	@Query("""
+		select ia.invigilator.id as personId, ra.examDate as examDate,
+		       ts.startTime as startTime, ts.endTime as endTime
+		from InvigilatorAssignment ia join ia.roomAssignment ra join ra.timeSlot ts
+		where ra.scheduleGroup.id = :groupId and ia.invigilator is not null
+		""")
+	List<PersonDutyWindow> findInvigilatorDutyWindowsByScheduleGroupId(@Param("groupId") UUID groupId);
+
+	/** Dates in {@code [from, to]} on which the person holds any duty (chief or invigilator). */
+	@Query("""
+		select distinct ra.examDate from RoomAssignment ra
+		left join ra.invigilatorAssignments ia
+		where (ra.chiefInvigilator.id = :personId or ia.invigilator.id = :personId)
+		and ra.examDate between :from and :to
+		order by ra.examDate
+		""")
+	List<LocalDate> findDutyDatesForPersonBetween(
+		@Param("personId") UUID personId,
+		@Param("from") LocalDate from,
+		@Param("to") LocalDate to
+	);
 }
 
