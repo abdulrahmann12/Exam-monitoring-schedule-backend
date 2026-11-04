@@ -75,8 +75,23 @@ class SchedulingIntegrationTest {
 	@Autowired private ScheduleGroupRepository scheduleGroupRepository;
 	@Autowired private SettingsRepository settingsRepository;
 	@Autowired private MockMvc mockMvc;
+	@Autowired private PeopleService peopleService;
 
 	private final List<UUID> createdGroups = new ArrayList<>();
+
+	@Test
+	void chiefCreatedThroughTheApiMayCoverTwoParallelRooms() {
+		var created = peopleService.createPerson(new schedule.example.schedule.dto.person.PersonRequest(
+			"API Chief", "Exams", null, PersonRole.CHIEF_INVIGILATOR, EnumSet.allOf(WeekDay.class)));
+		assertThat(created.maxParallelRooms()).isEqualTo(2);
+
+		ScheduleGroup g = group("Parallel");
+		TimeSlot slot = slot(g, 9, 12);
+		Person chief = personRepository.findById(created.id()).orElseThrow();
+		create(g, slot, room("P1"), chief);
+		create(g, slot, room("P2"), chief); // second parallel room must be allowed
+		assertThat(roomAssignmentRepository.count()).isEqualTo(2);
+	}
 
 	@AfterEach
 	void cleanUp() {

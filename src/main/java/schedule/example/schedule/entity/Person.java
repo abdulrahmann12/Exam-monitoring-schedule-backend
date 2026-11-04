@@ -13,6 +13,8 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -146,6 +148,20 @@ public class Person {
         /** Sets role and auto-derives maxParallelRooms (CHIEF=2, INVIGILATOR=1). */
         public void setRole(PersonRole role) {
                 this.role = role;
-                this.maxParallelRooms = (role == PersonRole.CHIEF_INVIGILATOR) ? 2 : 1;
+                this.maxParallelRooms = parallelRoomsFor(role);
+        }
+
+        /**
+         * Safety net: the Lombok builder (used by MapStruct on create) bypasses {@link #setRole},
+         * which left chiefs created through the API with a limit of 1. Always derive it on save.
+         */
+        @PrePersist
+        @PreUpdate
+        void deriveMaxParallelRooms() {
+                this.maxParallelRooms = parallelRoomsFor(role);
+        }
+
+        private static int parallelRoomsFor(PersonRole role) {
+                return role == PersonRole.CHIEF_INVIGILATOR ? 2 : 1;
         }
 }

@@ -37,5 +37,14 @@ public class WorkloadReconciler implements ApplicationRunner {
 			  + (SELECT COUNT(*) FROM invigilator_assignments ia WHERE ia.invigilator_id = p.id)
 			""");
 		LOGGER.info("[WORKLOAD] Reconciled total_assignments for {} person row(s).", updated);
+
+		// Repair rows saved with the wrong parallel-room limit (chiefs created via the API got 1).
+		int repaired = jdbcTemplate.update("""
+			UPDATE people SET max_parallel_rooms = CASE WHEN role = 'CHIEF_INVIGILATOR' THEN 2 ELSE 1 END
+			WHERE max_parallel_rooms <> CASE WHEN role = 'CHIEF_INVIGILATOR' THEN 2 ELSE 1 END
+			""");
+		if (repaired > 0) {
+			LOGGER.warn("[WORKLOAD] Repaired max_parallel_rooms for {} person row(s).", repaired);
+		}
 	}
 }
