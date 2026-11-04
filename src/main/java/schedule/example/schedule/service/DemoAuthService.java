@@ -58,15 +58,15 @@ public class DemoAuthService {
         }
 
         String demoEmail = DemoProperties.DEMO_EMAIL;
-        boolean exists = adminUserRepository.findByEmailIgnoreCase(demoEmail).isPresent();
+        var demoUser = adminUserRepository.findByEmailIgnoreCase(demoEmail);
 
-        if (!exists) {
+        if (demoUser.isEmpty()) {
             log.warn("[DEMO] Demo login attempted but demo account '{}' does not exist. " +
                 "Verify DataInitializer ran with app.demo.enabled=true.", demoEmail);
             throw new NotFoundException("Demo account is not available. Please contact the administrator.");
         }
 
-        JwtTokenProvider.TokenDetails tokenDetails = jwtTokenProvider.generateToken(demoEmail);
+        JwtTokenProvider.TokenDetails tokenDetails = jwtTokenProvider.generateToken(demoEmail, demoUser.get().getTokenVersion());
 
         log.info("[DEMO] Demo login SUCCESS — ip='{}', email='{}', timestamp={}, expiresAt={}",
             clientIp, demoEmail, Instant.now(), tokenDetails.expiresAt());

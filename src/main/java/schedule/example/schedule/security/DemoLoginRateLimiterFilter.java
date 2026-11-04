@@ -73,7 +73,7 @@ public class DemoLoginRateLimiterFilter extends OncePerRequestFilter {
         String ip = resolveClientIp(request);
         long now = System.currentTimeMillis();
 
-        long[] window = ipWindows.compute(ip, (_, existing) -> {
+        long[] window = ipWindows.compute(ip, (key, existing) -> {
             if (existing == null || now - existing[1] > WINDOW_MILLIS) {
                 return new long[]{1L, now};
             }
@@ -105,11 +105,12 @@ public class DemoLoginRateLimiterFilter extends OncePerRequestFilter {
         objectMapper.writeValue(response.getOutputStream(), error);
     }
 
+    /**
+     * The real client IP. With {@code server.forward-headers-strategy=native}, Tomcat's RemoteIpValve
+     * rewrites getRemoteAddr() from X-Forwarded-For <em>only</em> when the direct peer is a trusted
+     * proxy — so a client cannot pick its own IP by sending a forged header.
+     */
     private String resolveClientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
         return request.getRemoteAddr();
     }
 

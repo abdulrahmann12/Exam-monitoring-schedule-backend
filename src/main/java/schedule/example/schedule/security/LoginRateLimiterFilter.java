@@ -71,7 +71,7 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
         String ip = resolveClientIp(request);
         long now = System.currentTimeMillis();
 
-        long[] window = ipWindows.compute(ip, (_, existing) -> {
+        long[] window = ipWindows.compute(ip, (key, existing) -> {
             if (existing == null || now - existing[1] > WINDOW_MILLIS) {
                 // Start new window: [count=1, windowStart=now]
                 return new long[]{1L, now};
@@ -106,14 +106,11 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Resolves the real client IP, using X-Forwarded-For for reverse-proxy setups.
-     * Takes only the first (leftmost) entry to prevent header spoofing.
+     * The real client IP. With {@code server.forward-headers-strategy=native}, Tomcat's RemoteIpValve
+     * rewrites getRemoteAddr() from X-Forwarded-For <em>only</em> when the direct peer is a trusted
+     * proxy — so a client cannot pick its own IP by sending a forged header.
      */
     private String resolveClientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
         return request.getRemoteAddr();
     }
 

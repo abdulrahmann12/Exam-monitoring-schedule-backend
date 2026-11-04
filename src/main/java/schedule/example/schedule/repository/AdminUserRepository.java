@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
 import schedule.example.schedule.entity.AdminUser;
+import schedule.example.schedule.entity.enums.AdminRole;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -12,6 +13,8 @@ import java.util.UUID;
 public interface AdminUserRepository extends JpaRepository<AdminUser, UUID> {
 
 	Optional<AdminUser> findByEmailIgnoreCase(String email);
+
+	boolean existsByRole(AdminRole role);
 
 	/**
 	 * Deletes any admin rows that were created without a password hash (e.g. rows inserted

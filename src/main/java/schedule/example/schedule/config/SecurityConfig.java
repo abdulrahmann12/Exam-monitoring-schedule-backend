@@ -22,6 +22,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import schedule.example.schedule.security.AdminUserDetailsService;
 import schedule.example.schedule.security.DemoLoginRateLimiterFilter;
+import schedule.example.schedule.security.DemoReadOnlyFilter;
 import schedule.example.schedule.security.JwtAuthenticationFilter;
 import schedule.example.schedule.security.LoginRateLimiterFilter;
 import schedule.example.schedule.security.RestAccessDeniedHandler;
@@ -36,6 +37,7 @@ public class SecurityConfig {
 	private final JwtAuthenticationFilter jwtAuthenticationFilter;
 	private final LoginRateLimiterFilter loginRateLimiterFilter;
 	private final DemoLoginRateLimiterFilter demoLoginRateLimiterFilter;
+	private final DemoReadOnlyFilter demoReadOnlyFilter;
 	private final RestAuthenticationEntryPoint restAuthenticationEntryPoint;
 	private final RestAccessDeniedHandler restAccessDeniedHandler;
 	private final AdminUserDetailsService adminUserDetailsService;
@@ -45,6 +47,7 @@ public class SecurityConfig {
 		JwtAuthenticationFilter jwtAuthenticationFilter,
 		LoginRateLimiterFilter loginRateLimiterFilter,
 		DemoLoginRateLimiterFilter demoLoginRateLimiterFilter,
+		DemoReadOnlyFilter demoReadOnlyFilter,
 		RestAuthenticationEntryPoint restAuthenticationEntryPoint,
 		RestAccessDeniedHandler restAccessDeniedHandler,
 		AdminUserDetailsService adminUserDetailsService,
@@ -53,6 +56,7 @@ public class SecurityConfig {
 		this.jwtAuthenticationFilter = jwtAuthenticationFilter;
 		this.loginRateLimiterFilter = loginRateLimiterFilter;
 		this.demoLoginRateLimiterFilter = demoLoginRateLimiterFilter;
+		this.demoReadOnlyFilter = demoReadOnlyFilter;
 		this.restAuthenticationEntryPoint = restAuthenticationEntryPoint;
 		this.restAccessDeniedHandler = restAccessDeniedHandler;
 		this.adminUserDetailsService = adminUserDetailsService;
@@ -69,23 +73,16 @@ public class SecurityConfig {
 				.authenticationEntryPoint(restAuthenticationEntryPoint)
 				.accessDeniedHandler(restAccessDeniedHandler))
 			.authorizeHttpRequests(authorize -> authorize
-				// Public auth endpoints — login + demo-login + deployment diagnostic
-				.requestMatchers("/api/auth/login", "/api/auth/demo-login", "/api/auth/admin-check").permitAll()
-				// Actuator health & info are publicly readable; all others require auth
-				.requestMatchers("/actuator/health", "/actuator/info").permitAll()
-				.requestMatchers("/actuator/**").hasRole("ADMIN")
-				// Swagger UI — public in dev; set SWAGGER_ENABLED=false in production
-				.requestMatchers(
-					"/swagger-ui.html",
-					"/swagger-ui/**",
-					"/v3/api-docs/**"
-				).permitAll()
+				// Only the two login endpoints are public. Everything else needs a valid token.
+				.requestMatchers("/api/auth/login", "/api/auth/demo-login").permitAll()
 				.anyRequest().authenticated())
 			.authenticationProvider(authenticationProvider)
 			// Rate limiter runs before JWT filter to reject brute-force before token parsing
 			.addFilterBefore(loginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
 			.addFilterBefore(demoLoginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
-			.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+			.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+			// Demo sessions are read-only server-side, regardless of what the browser sends.
+			.addFilterAfter(demoReadOnlyFilter, JwtAuthenticationFilter.class);
 
 		return http.build();
 	}
@@ -149,6 +146,14 @@ public class SecurityConfig {
 	@Bean
 	public FilterRegistrationBean<LoginRateLimiterFilter> rateLimiterFilterRegistration(LoginRateLimiterFilter filter) {
 		FilterRegistrationBean<LoginRateLimiterFilter> registration = new FilterRegistrationBean<>(filter);
+		registration.setEnabled(false);
+		return registration;
+	}
+
+	/** Prevents Spring Boot from registering DemoReadOnlyFilter in the root servlet chain. */
+	@Bean
+	public FilterRegistrationBean<DemoReadOnlyFilter> demoReadOnlyFilterRegistration(DemoReadOnlyFilter filter) {
+		FilterRegistrationBean<DemoReadOnlyFilter> registration = new FilterRegistrationBean<>(filter);
 		registration.setEnabled(false);
 		return registration;
 	}

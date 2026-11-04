@@ -10,15 +10,15 @@ import org.springframework.stereotype.Service;
 
 import schedule.example.schedule.config.CacheConfig;
 import schedule.example.schedule.entity.enums.AdminRole;
+import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.repository.AdminUserRepository;
 
 /**
  * Loads admin user details for authentication.
  *
- * <p>{@link #loadUserByUsername(String)} is annotated with {@link Cacheable} to prevent a
- * database round-trip on every authenticated HTTP request. The cache TTL is controlled by
- * {@link CacheConfig} (5 minutes). This is safe because admin credentials change infrequently;
- * password changes must call {@link #evictUserCache(String)} to invalidate the entry immediately.
+ * <p>Deliberately <strong>not cached</strong>: every request re-reads the account so that a
+ * logout, password change or deleted account takes effect immediately (see {@link #loadForToken}).
+ * It is a single indexed primary-key-sized lookup per request.
  */
 @Service
 public class AdminUserDetailsService implements UserDetailsService {
@@ -30,33 +30,42 @@ public class AdminUserDetailsService implements UserDetailsService {
 	}
 
 	/**
-	 * Loads user details by email (case-insensitive), with result cached for 5 minutes.
+	 * Loads user details by email (case-insensitive). Used by the password login.
 	 *
 	 * @param username the admin email address (used as JWT subject)
 	 */
 	@Override
 	public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
 		return adminUserRepository.findByEmailIgnoreCase(username)
-			.map(admin -> {
-				// Guard: a row with a null or empty password_hash means the account was never
-				// fully initialised (e.g. created before DataInitializer ran, or a failed save).
-				// Treat it as "not found" so Spring Security converts it to BadCredentialsException
-				// instead of letting BCryptPasswordEncoder log "Empty encoded password" and silently
-				// returning false, which produces a confusing 401 with no actionable stack trace.
-				if (admin.getPasswordHash() == null || admin.getPasswordHash().isBlank()) {
-					throw new UsernameNotFoundException(
-						"Admin account exists for email '" + admin.getEmail() +
-						"' but has no password hash — restart the server so DataInitializer can sync it."
-					);
-				}
-				return User.builder()
-					.username(admin.getEmail())
-					.password(admin.getPasswordHash())
-					.roles(admin.getRole() != null ? admin.getRole().name() : "ADMIN")
-					.build();
-			})
+			.map(AdminUserDetailsService::toUserDetails)
 			.orElseThrow(() -> new UsernameNotFoundException(
 				"No admin account found for email: " + username));
+	}
+
+	private static UserDetails toUserDetails(AdminUser admin) {
+		// A row without a password hash was never fully initialised — treat it as "not found"
+		// so Spring Security answers with a clean 401 instead of a confusing encoder warning.
+		if (admin.getPasswordHash() == null || admin.getPasswordHash().isBlank()) {
+			throw new UsernameNotFoundException("Admin account '" + admin.getEmail() + "' has no password set.");
+		}
+		return User.builder()
+			.username(admin.getEmail())
+			.password(admin.getPasswordHash())
+			.roles(admin.getRole() != null ? admin.getRole().name() : "ADMIN")
+			.build();
+	}
+
+	/**
+	 * Loads the user for an incoming JWT and rejects the token when its version no longer matches
+	 * the account (user logged out or changed password since it was issued).
+	 */
+	public UserDetails loadForToken(String email, Integer tokenVersion) {
+		AdminUser admin = adminUserRepository.findByEmailIgnoreCase(email)
+			.orElseThrow(() -> new UsernameNotFoundException("No admin account found for email: " + email));
+		if (tokenVersion == null || tokenVersion != admin.getTokenVersion()) {
+			throw new UsernameNotFoundException("Token has been revoked");
+		}
+		return toUserDetails(admin);
 	}
 
 	/**

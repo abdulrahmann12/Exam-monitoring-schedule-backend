@@ -55,6 +55,14 @@ public class AdminUser {
 	@Column(nullable = false, length = 20)
 	private AdminRole role = AdminRole.ADMIN;
 
+	/**
+	 * Embedded in every JWT. Incrementing it (logout, password change) instantly invalidates
+	 * all tokens issued before — the server-side "log out everywhere" switch.
+	 */
+	@Builder.Default
+	@Column(name = "token_version", nullable = false)
+	private int tokenVersion = 0;
+
 	@CreatedDate
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;

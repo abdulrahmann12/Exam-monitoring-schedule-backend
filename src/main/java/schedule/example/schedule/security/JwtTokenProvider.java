@@ -39,12 +39,16 @@ public class JwtTokenProvider {
 		this.signingKey = Keys.hmacShaKeyFor(keyBytes);
 	}
 
-	public TokenDetails generateToken(String subject) {
+	/** Claim holding the user's {@code tokenVersion} at issue time. */
+	public static final String TOKEN_VERSION_CLAIM = "tv";
+
+	public TokenDetails generateToken(String subject, int tokenVersion) {
 		Instant issuedAt = Instant.now();
 		Instant expiresAt = issuedAt.plus(jwtProperties.expirationMinutes(), ChronoUnit.MINUTES);
 
 		String token = Jwts.builder()
 			.subject(subject)
+			.claim(TOKEN_VERSION_CLAIM, tokenVersion)
 			.issuedAt(Date.from(issuedAt))
 			.expiration(Date.from(expiresAt))
 			.signWith(signingKey)

@@ -24,6 +24,7 @@ import schedule.example.schedule.entity.RoomAssignment;
 import schedule.example.schedule.entity.ScheduleGroup;
 import schedule.example.schedule.entity.Settings;
 import schedule.example.schedule.entity.TimeSlot;
+import schedule.example.schedule.exception.BusinessRuleViolationException;
 import schedule.example.schedule.exception.NotFoundException;
 import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.ScheduleGroupRepository;
@@ -73,6 +74,9 @@ public class ScheduleNotificationService {
 
 	public ScheduleNotifyResponse notifyAssignedStaff(UUID groupId) {
 		demoModeService.rejectIfDemoUser("notify-schedule-group");
+		if (!mailService.isConfigured()) {
+			throw new BusinessRuleViolationException(Messages.MAIL_NOT_CONFIGURED);
+		}
 
 		ScheduleGroup group = scheduleGroupRepository.findById(groupId)
 			.orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.SCHEDULE_GROUP_NOT_FOUND, groupId)));

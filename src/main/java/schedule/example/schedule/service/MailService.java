@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import schedule.example.schedule.config.Messages;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
@@ -39,11 +40,19 @@ public class MailService {
 		this.senderName = senderName;
 	}
 
+	/** False when BREVO_API_KEY or BREVO_SENDER_EMAIL is not set (e.g. on-premise installs without email). */
+	public boolean isConfigured() {
+		return apiKey != null && !apiKey.isBlank() && senderEmail != null && !senderEmail.isBlank();
+	}
+
 	public void sendHtml(String to, String subject, String htmlBody) {
 		sendHtmlWithPdf(to, subject, htmlBody, null, null);
 	}
 
 	public void sendHtmlWithPdf(String to, String subject, String htmlBody, String filename, byte[] pdf) {
+		if (!isConfigured()) {
+			throw new IllegalStateException(Messages.MAIL_NOT_CONFIGURED);
+		}
 		List<BrevoAttachment> attachments = null;
 		if (pdf != null && pdf.length > 0 && filename != null && !filename.isBlank()) {
 			attachments = List.of(new BrevoAttachment(Base64.getEncoder().encodeToString(pdf), filename));

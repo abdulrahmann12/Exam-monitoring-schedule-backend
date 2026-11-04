@@ -53,60 +53,12 @@ public class DataInitializer implements ApplicationRunner {
 		this.scheduleGroupSupport = scheduleGroupSupport;
 	}
 
+	private static final int MIN_BOOTSTRAP_PASSWORD_LENGTH = 10;
+
 	@Override
 	@Transactional
 	public void run(ApplicationArguments args) {
-		String bootstrapEmail = requireConfiguredValue(
-			bootstrapAdminProperties.email(),
-			"app.bootstrap-admin.email"
-		);
-		String bootstrapPassword = requireConfiguredValue(
-			bootstrapAdminProperties.password(),
-			"app.bootstrap-admin.password"
-		);
-		String normalizedEmail = bootstrapEmail.trim().toLowerCase(Locale.ROOT);
-
-		boolean[] isNew = {false};
-		AdminUser adminUser = adminUserRepository.findByEmailIgnoreCase(normalizedEmail)
-			.orElseGet(() -> {
-				isNew[0] = true;
-				AdminUser newAdmin = new AdminUser();
-				newAdmin.setEmail(normalizedEmail);
-				return newAdmin;
-			});
-
-		// Sync password on every restart so changes to the config take effect immediately.
-		adminUser.setPasswordHash(passwordEncoder.encode(bootstrapPassword));
-		AdminUser saved = adminUserRepository.saveAndFlush(adminUser);
-
-		// Fail fast if the hash wasn't persisted — catches mapping or DB constraint issues.
-		if (saved.getPasswordHash() == null || saved.getPasswordHash().isBlank()) {
-			throw new IllegalStateException(
-				"[BOOTSTRAP] FATAL: password_hash was not persisted for admin '" + normalizedEmail +
-				"'. Check DB constraints and JPA column mapping on AdminUser.passwordHash."
-			);
-		}
-
-		// Evict cached UserDetails so the new password hash is picked up immediately.
-		adminUserDetailsService.evictUserCache(normalizedEmail);
-
-		// Remove ghost rows with null/empty password_hash left by previous failed deployments.
-		int orphansRemoved = adminUserRepository.deleteOrphanedPasswordlessAccounts(normalizedEmail);
-		if (orphansRemoved > 0) {
-			adminUserDetailsService.evictAllUserCache();
-			LOGGER.warn("[BOOTSTRAP] Removed {} orphaned admin row(s) with null/empty password_hash. " +
-				"These were ghost rows from a previous deployment. Login should now work correctly.", orphansRemoved);
-		}
-
-		// Log at WARN so this event is visible even when root log level is WARN.
-		if (isNew[0]) {
-			LOGGER.warn("[BOOTSTRAP] Admin account CREATED for email='{}'. " +
-				"Source: env var BOOTSTRAP_ADMIN_EMAIL or default in application.properties.", normalizedEmail);
-		} else {
-			LOGGER.warn("[BOOTSTRAP] Admin account password SYNCED for email='{}'. " +
-				"If login still fails, verify the BOOTSTRAP_ADMIN_EMAIL env var matches this email " +
-				"and that BOOTSTRAP_ADMIN_PASSWORD matches the password you are using.", normalizedEmail);
-		}
+		bootstrapAdministrator();
 
 		// ── Demo account ──────────────────────────────────────────────────────
 		if (demoProperties.enabled()) {
@@ -130,13 +82,66 @@ public class DataInitializer implements ApplicationRunner {
 		scheduleGroupSupport.ensureDefaultGroupAndAttachOrphans();
 	}
 
-	private String requireConfiguredValue(String value, String propertyName) {
-		if (value == null || value.isBlank()) {
-			throw new BeanCreationException(
-				"Missing required configuration property '" + propertyName + "'"
-			);
+	/**
+	 * Creates the first administrator from {@code BOOTSTRAP_ADMIN_EMAIL}/{@code BOOTSTRAP_ADMIN_PASSWORD}.
+	 *
+	 * <ul>
+	 *   <li>No administrator yet → both variables are required; the account is created.</li>
+	 *   <li>An administrator exists → nothing happens. Restarts never overwrite a password that an
+	 *       admin changed through the app (the old behaviour reset it on every restart).</li>
+	 *   <li>{@code BOOTSTRAP_ADMIN_RESET_PASSWORD=true} → recovery: that account's password is reset
+	 *       and all its sessions are revoked. Remove the flag again after one restart.</li>
+	 * </ul>
+	 */
+	private void bootstrapAdministrator() {
+		String email = normalize(bootstrapAdminProperties.email());
+		String password = bootstrapAdminProperties.password();
+		boolean adminExists = adminUserRepository.existsByRole(AdminRole.ADMIN);
+
+		if (!adminExists) {
+			if (email == null || password == null || password.isBlank()) {
+				throw new BeanCreationException(
+					"No administrator account exists. Set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD "
+						+ "(at least " + MIN_BOOTSTRAP_PASSWORD_LENGTH + " characters) to create the first one.");
+			}
+			requireStrongPassword(password);
+			AdminUser admin = adminUserRepository.findByEmailIgnoreCase(email).orElseGet(AdminUser::new);
+			admin.setEmail(email);
+			admin.setRole(AdminRole.ADMIN);
+			admin.setPasswordHash(passwordEncoder.encode(password));
+			adminUserRepository.saveAndFlush(admin);
+			LOGGER.warn("[BOOTSTRAP] First administrator CREATED for '{}'. "
+				+ "You can now remove BOOTSTRAP_ADMIN_PASSWORD from the environment.", email);
+		} else if (bootstrapAdminProperties.resetPassword()) {
+			if (email == null || password == null || password.isBlank()) {
+				throw new BeanCreationException(
+					"BOOTSTRAP_ADMIN_RESET_PASSWORD=true requires BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD.");
+			}
+			requireStrongPassword(password);
+			AdminUser admin = adminUserRepository.findByEmailIgnoreCase(email)
+				.orElseThrow(() -> new BeanCreationException("Cannot reset password: no account '" + email + "'."));
+			admin.setPasswordHash(passwordEncoder.encode(password));
+			admin.setTokenVersion(admin.getTokenVersion() + 1);
+			adminUserRepository.saveAndFlush(admin);
+			LOGGER.warn("[BOOTSTRAP] Password RESET for '{}' and all sessions revoked. "
+				+ "Remove BOOTSTRAP_ADMIN_RESET_PASSWORD now.", email);
 		}
-		return value;
+
+		int orphansRemoved = adminUserRepository.deleteOrphanedPasswordlessAccounts(email == null ? "" : email);
+		if (orphansRemoved > 0) {
+			LOGGER.warn("[BOOTSTRAP] Removed {} admin row(s) without a password hash.", orphansRemoved);
+		}
+	}
+
+	private static void requireStrongPassword(String password) {
+		if (password.length() < MIN_BOOTSTRAP_PASSWORD_LENGTH) {
+			throw new BeanCreationException(
+				"BOOTSTRAP_ADMIN_PASSWORD must be at least " + MIN_BOOTSTRAP_PASSWORD_LENGTH + " characters.");
+		}
+	}
+
+	private static String normalize(String email) {
+		return email == null || email.isBlank() ? null : email.trim().toLowerCase(Locale.ROOT);
 	}
 
 	/**
