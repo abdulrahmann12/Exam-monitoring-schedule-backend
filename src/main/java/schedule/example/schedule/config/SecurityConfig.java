@@ -3,7 +3,9 @@ package schedule.example.schedule.config;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.Customizer;
@@ -25,6 +27,7 @@ import schedule.example.schedule.security.DemoLoginRateLimiterFilter;
 import schedule.example.schedule.security.DemoReadOnlyFilter;
 import schedule.example.schedule.security.JwtAuthenticationFilter;
 import schedule.example.schedule.security.LoginRateLimiterFilter;
+import schedule.example.schedule.security.PasswordChangeRequiredFilter;
 import schedule.example.schedule.security.RestAccessDeniedHandler;
 import schedule.example.schedule.security.RestAuthenticationEntryPoint;
 
@@ -34,6 +37,10 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
 
+	private static final String ADMIN = "ADMIN";
+	private static final String SCHEDULER = "SCHEDULER";
+	private static final String DEMO = "DEMO_ADMIN";
+
 	private final JwtAuthenticationFilter jwtAuthenticationFilter;
 	private final LoginRateLimiterFilter loginRateLimiterFilter;
 	private final DemoLoginRateLimiterFilter demoLoginRateLimiterFilter;
@@ -42,6 +49,7 @@ public class SecurityConfig {
 	private final RestAccessDeniedHandler restAccessDeniedHandler;
 	private final AdminUserDetailsService adminUserDetailsService;
 	private final CorsProperties corsProperties;
+	private final ObjectMapper objectMapper;
 
 	public SecurityConfig(
 		JwtAuthenticationFilter jwtAuthenticationFilter,
@@ -51,7 +59,8 @@ public class SecurityConfig {
 		RestAuthenticationEntryPoint restAuthenticationEntryPoint,
 		RestAccessDeniedHandler restAccessDeniedHandler,
 		AdminUserDetailsService adminUserDetailsService,
-		CorsProperties corsProperties
+		CorsProperties corsProperties,
+		ObjectMapper objectMapper
 	) {
 		this.jwtAuthenticationFilter = jwtAuthenticationFilter;
 		this.loginRateLimiterFilter = loginRateLimiterFilter;
@@ -61,6 +70,7 @@ public class SecurityConfig {
 		this.restAccessDeniedHandler = restAccessDeniedHandler;
 		this.adminUserDetailsService = adminUserDetailsService;
 		this.corsProperties = corsProperties;
+		this.objectMapper = objectMapper;
 	}
 
 	@Bean
@@ -72,17 +82,34 @@ public class SecurityConfig {
 			.exceptionHandling(exceptions -> exceptions
 				.authenticationEntryPoint(restAuthenticationEntryPoint)
 				.accessDeniedHandler(restAccessDeniedHandler))
+			// Who may do what. Rules are checked top to bottom; the first match wins.
+			// Default for anything not listed: ADMIN or SCHEDULER (viewers are read-only).
 			.authorizeHttpRequests(authorize -> authorize
-				// Only the two login endpoints are public. Everything else needs a valid token.
+				// Public: the two login endpoints only.
 				.requestMatchers("/api/auth/login", "/api/auth/demo-login").permitAll()
-				.anyRequest().authenticated())
+				// Own session: every signed-in user.
+				.requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
+				.requestMatchers(HttpMethod.POST, "/api/auth/logout", "/api/auth/change-password").authenticated()
+				// User management: administrators only (also for reading — it lists emails).
+				.requestMatchers("/api/users", "/api/users/**").hasRole(ADMIN)
+				// System settings: everyone reads (branding), only administrators change.
+				.requestMatchers(HttpMethod.PUT, "/api/settings").hasRole(ADMIN)
+				// Reading schedules, people, rooms, … : every signed-in role.
+				.requestMatchers(HttpMethod.GET, "/**").authenticated()
+				// Auto-assign preview writes nothing; the demo may try it, viewers have no use for it.
+				.requestMatchers(HttpMethod.POST, "/api/assignments/generate-preview").hasAnyRole(ADMIN, SCHEDULER, DEMO)
+				// Every other change. DEMO is listed so DemoReadOnlyFilter (which runs earlier)
+				// answers with its clear "disabled in demo mode" message; it blocks all demo writes.
+				.anyRequest().hasAnyRole(ADMIN, SCHEDULER, DEMO))
 			.authenticationProvider(authenticationProvider)
 			// Rate limiter runs before JWT filter to reject brute-force before token parsing
 			.addFilterBefore(loginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
 			.addFilterBefore(demoLoginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
 			.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
 			// Demo sessions are read-only server-side, regardless of what the browser sends.
-			.addFilterAfter(demoReadOnlyFilter, JwtAuthenticationFilter.class);
+			.addFilterAfter(demoReadOnlyFilter, JwtAuthenticationFilter.class)
+			// Accounts with a temporary password may only change it (or log out).
+			.addFilterAfter(new PasswordChangeRequiredFilter(objectMapper), DemoReadOnlyFilter.class);
 
 		return http.build();
 	}

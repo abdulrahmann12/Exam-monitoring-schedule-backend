@@ -16,6 +16,7 @@ import schedule.example.schedule.entity.enums.ThemeMode;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.repository.SettingsRepository;
 import schedule.example.schedule.security.AdminUserDetailsService;
+import schedule.example.schedule.security.PasswordPolicy;
 import schedule.example.schedule.service.ScheduleGroupSupport;
 
 import java.security.SecureRandom;
@@ -108,6 +109,8 @@ public class DataInitializer implements ApplicationRunner {
 			AdminUser admin = adminUserRepository.findByEmailIgnoreCase(email).orElseGet(AdminUser::new);
 			admin.setEmail(email);
 			admin.setRole(AdminRole.ADMIN);
+			admin.setEnabled(true);
+			admin.setMustChangePassword(false);
 			admin.setPasswordHash(passwordEncoder.encode(password));
 			adminUserRepository.saveAndFlush(admin);
 			LOGGER.warn("[BOOTSTRAP] First administrator CREATED for '{}'. "
@@ -124,6 +127,10 @@ public class DataInitializer implements ApplicationRunner {
 			admin.setTokenVersion(admin.getTokenVersion() + 1);
 			admin.setFailedLoginAttempts(0);
 			admin.setLockedUntil(null);
+			// Recovery must always end with a usable administrator.
+			admin.setRole(AdminRole.ADMIN);
+			admin.setEnabled(true);
+			admin.setMustChangePassword(false);
 			adminUserRepository.saveAndFlush(admin);
 			LOGGER.warn("[BOOTSTRAP] Password RESET for '{}' and all sessions revoked. "
 				+ "Remove BOOTSTRAP_ADMIN_RESET_PASSWORD now.", email);
@@ -139,6 +146,10 @@ public class DataInitializer implements ApplicationRunner {
 		if (password.length() < MIN_BOOTSTRAP_PASSWORD_LENGTH) {
 			throw new BeanCreationException(
 				"BOOTSTRAP_ADMIN_PASSWORD must be at least " + MIN_BOOTSTRAP_PASSWORD_LENGTH + " characters.");
+		}
+		if (PasswordPolicy.exceedsMaximum(password)) {
+			throw new BeanCreationException(
+				"BOOTSTRAP_ADMIN_PASSWORD must be at most " + PasswordPolicy.MAX_BYTES + " bytes.");
 		}
 	}
 
@@ -168,6 +179,7 @@ public class DataInitializer implements ApplicationRunner {
 		demoUser.setEmail(demoEmail.toLowerCase(Locale.ROOT));
 		demoUser.setPasswordHash(passwordEncoder.encode(randomPassword));
 		demoUser.setRole(AdminRole.DEMO_ADMIN);
+		demoUser.setEnabled(true);
 		adminUserRepository.saveAndFlush(demoUser);
 
 		LOGGER.warn("[DEMO] Demo account CREATED for email='{}' with role=DEMO_ADMIN. " +

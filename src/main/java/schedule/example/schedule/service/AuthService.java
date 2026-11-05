@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
@@ -22,6 +23,7 @@ import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.exception.ValidationException;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.security.JwtTokenProvider;
+import schedule.example.schedule.security.PasswordPolicy;
 
 @Service
 @Validated
@@ -48,6 +50,9 @@ public class AuthService {
 			loginAttemptService.recordSuccess(admin.getId());
 			return issueToken(admin);
 		} catch (AuthenticationException ex) {
+			if (ex instanceof DisabledException disabled && account.isPresent()) {
+				rejectDisabled(account.get(), request.password(), disabled);
+			}
 			if (account.isPresent()) {
 				java.time.Instant lockedUntil = loginAttemptService.recordFailure(account.get().getId());
 				if (lockedUntil != null) {
@@ -55,6 +60,20 @@ public class AuthService {
 				}
 			}
 			throw new BadCredentialsException(Messages.AUTH_INVALID_CREDENTIALS, ex);
+		}
+	}
+
+	/**
+	 * Spring checks "disabled" before the password, which would tell anyone that the email exists.
+	 * So the "disabled" message is only shown to someone who also typed the right password;
+	 * everyone else gets the usual generic answer (and the attempt counts as a failure).
+	 */
+	private void rejectDisabled(AdminUser account, String rawPassword, DisabledException ex) {
+		boolean passwordCorrect = rawPassword != null
+			&& !PasswordPolicy.exceedsMaximum(rawPassword)
+			&& passwordEncoder.matches(rawPassword, account.getPasswordHash());
+		if (passwordCorrect) {
+			throw new DisabledException(Messages.AUTH_ACCOUNT_DISABLED, ex);
 		}
 	}
 
@@ -87,7 +106,9 @@ public class AuthService {
 		if (request.currentPassword().equals(request.newPassword())) {
 			throw new ValidationException(Messages.AUTH_PASSWORD_UNCHANGED);
 		}
+		PasswordPolicy.validate(request.newPassword());
 		admin.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+		admin.setMustChangePassword(false);
 		admin.setTokenVersion(admin.getTokenVersion() + 1);
 		adminUserRepository.save(admin);
 		LOGGER.info("[AUTH] Password changed — all other sessions revoked for '{}'.", admin.getEmail());

@@ -20,6 +20,7 @@ import schedule.example.schedule.dto.auth.AuthResponse;
 import schedule.example.schedule.dto.auth.ChangePasswordRequest;
 import schedule.example.schedule.dto.auth.LoginRequest;
 import schedule.example.schedule.dto.auth.MeResponse;
+import schedule.example.schedule.security.AppUserPrincipal;
 import schedule.example.schedule.service.AuthService;
 import schedule.example.schedule.service.DemoAuthService;
 
@@ -62,9 +63,15 @@ public class AuthController {
 
 	/** Resolves the current authenticated session — used by the frontend on startup. */
 	@GetMapping("/me")
-	public MeResponse me(@AuthenticationPrincipal UserDetails userDetails) {
-		return new MeResponse(userDetails.getUsername(), userDetails.getAuthorities()
-				.stream().map(GrantedAuthority::getAuthority).toList());
+	public MeResponse me(@AuthenticationPrincipal AppUserPrincipal user) {
+		return new MeResponse(
+			user.getId(),
+			user.getUsername(),
+			user.getDisplayName(),
+			user.getRole().name(),
+			user.getAuthorities().stream().map(GrantedAuthority::getAuthority).toList(),
+			user.isMustChangePassword()
+		);
 	}
 
 	/** Revokes every token of the current user (all devices). */

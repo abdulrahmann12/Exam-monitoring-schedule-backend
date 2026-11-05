@@ -24,7 +24,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Admin user entity. Tracks creation/modification timestamps for security audit trails.
+ * User account (admin, scheduler, viewer or the demo account). Tracks creation/modification timestamps for security audit trails.
  */
 @Data
 @Builder
@@ -49,6 +49,23 @@ public class AdminUser {
 
 	@Column(name = "password_hash", nullable = false, length = 255)
 	private String passwordHash;
+
+	/** Name shown in the app (optional). */
+	@Column(name = "display_name", length = 120)
+	private String displayName;
+
+	/** Disabled accounts cannot sign in and their existing tokens stop working immediately. */
+	@Builder.Default
+	@Column(nullable = false)
+	private boolean enabled = true;
+
+	/** Set when an administrator created the account or reset its password: the user must pick their own password first. */
+	@Builder.Default
+	@Column(name = "must_change_password", nullable = false)
+	private boolean mustChangePassword = false;
+
+	@Column(name = "last_login_at")
+	private Instant lastLoginAt;
 
 	@Builder.Default
 	@Enumerated(EnumType.STRING)

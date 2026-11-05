@@ -23,8 +23,8 @@ import java.util.UUID;
  * the account is locked for {@code durationMinutes}. Complements the per-IP rate limiter, which
  * an attacker can sidestep by rotating IP addresses.
  *
- * <p>Recovery before the lock expires: restart once with {@code BOOTSTRAP_ADMIN_RESET_PASSWORD=true}
- * (for the bootstrap admin). A user-management screen to unlock accounts comes with Phase 2 roles.
+ * <p>Recovery before the lock expires: another administrator presses "Unlock" on the Users page,
+ * or (if no administrator can sign in) restart once with {@code BOOTSTRAP_ADMIN_RESET_PASSWORD=true}.
  */
 @Service
 @RequiredArgsConstructor
@@ -80,16 +80,28 @@ public class LoginAttemptService {
 		return new AccountLockedException(MessageFormat.format(Messages.AUTH_ACCOUNT_LOCKED, LOCK_TIME.format(lockedUntil)));
 	}
 
-	/** Clears the failure counter after a successful sign-in. */
+	/** Clears the failure counter and records the sign-in time after a successful sign-in. */
 	@Transactional
 	public void recordSuccess(UUID adminId) {
 		adminUserRepository.findById(adminId).ifPresent(admin -> {
-			if (admin.getFailedLoginAttempts() != 0 || admin.getLockedUntil() != null) {
-				admin.setFailedLoginAttempts(0);
-				admin.setLockedUntil(null);
-				adminUserRepository.save(admin);
-			}
+			admin.setFailedLoginAttempts(0);
+			admin.setLockedUntil(null);
+			admin.setLastLoginAt(Instant.now());
+			adminUserRepository.save(admin);
 		});
+	}
+
+	/** Lifts a lock right away (administrator action). */
+	@Transactional
+	public void unlock(AdminUser admin) {
+		admin.setFailedLoginAttempts(0);
+		admin.setLockedUntil(null);
+		adminUserRepository.save(admin);
+		LOGGER.warn("[AUTH] Account '{}' unlocked by an administrator.", admin.getEmail());
+	}
+
+	public boolean isLocked(AdminUser admin) {
+		return isLocked(admin, Instant.now());
 	}
 
 	private static boolean isLocked(AdminUser admin, Instant now) {

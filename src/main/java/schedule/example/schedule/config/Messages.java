@@ -92,6 +92,21 @@ public final class Messages {
 	public static final String MAIL_NOT_CONFIGURED = "Email sending is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL on the server.";
 	public static final String AUTH_ACCOUNT_LOCKED = "This account is locked after too many failed sign-in attempts. Try again after {0}, or ask your administrator to reset it.";
 	public static final String AUTH_PASSWORD_UNCHANGED = "The new password must be different from the current one.";
+	public static final String AUTH_PASSWORD_TOO_SHORT = "Password must be at least {0} characters.";
+	public static final String AUTH_PASSWORD_TOO_LONG = "Password is too long (maximum {0} bytes; non-Latin letters count as 2 or 3).";
+	public static final String AUTH_ACCOUNT_DISABLED = "This account is disabled. Ask your administrator to enable it.";
+	public static final String AUTH_PASSWORD_CHANGE_REQUIRED = "You must change your password before continuing.";
+	public static final String AUTH_ACCESS_DENIED = "You do not have permission to do this.";
+
+	// ==================== User Management Messages ====================
+	public static final String USER_NOT_FOUND = "User not found.";
+	public static final String USER_EMAIL_EXISTS = "A user with this email already exists.";
+	public static final String USER_ROLE_NOT_ASSIGNABLE = "This role cannot be assigned.";
+	public static final String USER_DEMO_ACCOUNT_PROTECTED = "The demo account is managed by the system and cannot be changed here.";
+	public static final String USER_CANNOT_CHANGE_SELF = "You cannot change your own role, disable or delete your own account. Ask another administrator.";
+	public static final String USER_RESET_OWN_PASSWORD = "To change your own password use Settings > Change password.";
+	public static final String USER_LAST_ADMIN ="There must always be at least one active administrator.";
+
 
 	// ==================== Demo Mode Messages ====================
 	/** Returned when a demo user attempts a blocked destructive operation. */

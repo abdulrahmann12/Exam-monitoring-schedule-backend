@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 
 import schedule.example.schedule.dto.common.ApiErrorResponse;
 
+import schedule.example.schedule.config.Messages;
+
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
@@ -32,7 +34,7 @@ public class RestAccessDeniedHandler implements AccessDeniedHandler {
 			Instant.now(),
 			HttpStatus.FORBIDDEN.value(),
 			HttpStatus.FORBIDDEN.getReasonPhrase(),
-			accessDeniedException.getMessage(),
+			Messages.AUTH_ACCESS_DENIED,
 			request.getRequestURI(),
 			List.of()
 		);

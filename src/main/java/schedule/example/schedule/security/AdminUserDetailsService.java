@@ -1,24 +1,19 @@
 package schedule.example.schedule.security;
 
-import org.springframework.cache.annotation.CacheEvict;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-import schedule.example.schedule.config.CacheConfig;
-import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.repository.AdminUserRepository;
 
 /**
- * Loads admin user details for authentication.
+ * Loads user accounts for authentication.
  *
  * <p>Deliberately <strong>not cached</strong>: every request re-reads the account so that a
- * logout, password change or deleted account takes effect immediately (see {@link #loadForToken}).
- * It is a single indexed primary-key-sized lookup per request.
+ * logout, password change, role change, disabled or deleted account takes effect immediately
+ * (see {@link #loadForToken}). It is a single indexed lookup per request.
  */
 @Service
 public class AdminUserDetailsService implements UserDetailsService {
@@ -31,57 +26,37 @@ public class AdminUserDetailsService implements UserDetailsService {
 
 	/**
 	 * Loads user details by email (case-insensitive). Used by the password login.
-	 *
-	 * @param username the admin email address (used as JWT subject)
+	 * A disabled account is returned as disabled; Spring Security then refuses it.
 	 */
 	@Override
 	public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
 		return adminUserRepository.findByEmailIgnoreCase(username)
-			.map(AdminUserDetailsService::toUserDetails)
-			.orElseThrow(() -> new UsernameNotFoundException(
-				"No admin account found for email: " + username));
+			.map(AdminUserDetailsService::toPrincipal)
+			.orElseThrow(() -> new UsernameNotFoundException("No account found for email: " + username));
 	}
 
-	private static UserDetails toUserDetails(AdminUser admin) {
+	private static AppUserPrincipal toPrincipal(AdminUser user) {
 		// A row without a password hash was never fully initialised — treat it as "not found"
 		// so Spring Security answers with a clean 401 instead of a confusing encoder warning.
-		if (admin.getPasswordHash() == null || admin.getPasswordHash().isBlank()) {
-			throw new UsernameNotFoundException("Admin account '" + admin.getEmail() + "' has no password set.");
+		if (user.getPasswordHash() == null || user.getPasswordHash().isBlank()) {
+			throw new UsernameNotFoundException("Account '" + user.getEmail() + "' has no password set.");
 		}
-		return User.builder()
-			.username(admin.getEmail())
-			.password(admin.getPasswordHash())
-			.roles(admin.getRole() != null ? admin.getRole().name() : "ADMIN")
-			.build();
+		return new AppUserPrincipal(user);
 	}
 
 	/**
-	 * Loads the user for an incoming JWT and rejects the token when its version no longer matches
-	 * the account (user logged out or changed password since it was issued).
+	 * Loads the user for an incoming JWT. Rejects the token when the account was deleted or
+	 * disabled, or when its version no longer matches (logged out / password changed since).
 	 */
-	public UserDetails loadForToken(String email, Integer tokenVersion) {
-		AdminUser admin = adminUserRepository.findByEmailIgnoreCase(email)
-			.orElseThrow(() -> new UsernameNotFoundException("No admin account found for email: " + email));
-		if (tokenVersion == null || tokenVersion != admin.getTokenVersion()) {
+	public AppUserPrincipal loadForToken(String email, Integer tokenVersion) {
+		AdminUser user = adminUserRepository.findByEmailIgnoreCase(email)
+			.orElseThrow(() -> new UsernameNotFoundException("No account found for email: " + email));
+		if (tokenVersion == null || tokenVersion != user.getTokenVersion()) {
 			throw new UsernameNotFoundException("Token has been revoked");
 		}
-		return toUserDetails(admin);
-	}
-
-	/**
-	 * Evicts the cached user details for the given email.
-	 * Call this whenever an admin's password or account status changes.
-	 */
-	public void evictUserCache(String email) {
-		// Spring AOP handles the cache eviction — no body needed.
-	}
-
-	/**
-	 * Evicts ALL cached user details (entire cache).
-	 * Call this when orphaned/ghost rows are removed so stale null-password entries
-	 * cannot survive in cache and cause "Empty encoded password" on the next login attempt.
-	 */
-	public void evictAllUserCache() {
-		// Spring AOP handles the cache eviction — no body needed.
+		if (!user.isEnabled()) {
+			throw new UsernameNotFoundException("Account is disabled");
+		}
+		return toPrincipal(user);
 	}
 }
