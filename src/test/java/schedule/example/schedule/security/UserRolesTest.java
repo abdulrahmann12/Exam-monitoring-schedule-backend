@@ -131,9 +131,10 @@ class UserRolesTest {
 		String email = "New.User" + DOMAIN;
 		mockMvc.perform(json(post("/api/users"), token(ADMIN), newUserJson(email, "SCHEDULER")))
 			.andExpect(status().isCreated())
-			.andExpect(jsonPath("$.email").value(email.toLowerCase()))
-			.andExpect(jsonPath("$.mustChangePassword").value(true))
-			.andExpect(jsonPath("$.passwordHash").doesNotExist());
+			.andExpect(jsonPath("$.user.email").value(email.toLowerCase()))
+			.andExpect(jsonPath("$.user.mustChangePassword").value(true))
+			.andExpect(jsonPath("$.inviteLink").doesNotExist())
+			.andExpect(jsonPath("$.user.passwordHash").doesNotExist());
 
 		String tempToken = login(email, "temporary-pass-1").andExpect(status().isOk()).andReturn().getResponse().getCookie("ug_access").getValue();
 
