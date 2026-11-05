@@ -367,7 +367,7 @@ class SchedulingIntegrationTest {
 	}
 
 	@Test
-	@WithMockUser
+	@WithMockUser(roles = "SCHEDULER")
 	void previewEndpointAndConflictsAreExposedOverHttp() throws Exception {
 		ScheduleGroup g = group("Http");
 		TimeSlot slot = slot(g, 9, 12);
