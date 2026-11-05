@@ -34,15 +34,26 @@ public class AuthService {
 	private final JwtTokenProvider jwtTokenProvider;
 	private final AdminUserRepository adminUserRepository;
 	private final PasswordEncoder passwordEncoder;
+	private final LoginAttemptService loginAttemptService;
 
 	public AuthResponse login(@Valid LoginRequest request) {
+		// A locked account is refused before the password is even checked.
+		var account = adminUserRepository.findByEmailIgnoreCase(request.email());
+		account.ifPresent(loginAttemptService::rejectIfLocked);
 		try {
 			Authentication authentication = authenticationManager.authenticate(
 				new UsernamePasswordAuthenticationToken(request.email(), request.password())
 			);
 			AdminUser admin = requireAdmin(authentication.getName());
+			loginAttemptService.recordSuccess(admin.getId());
 			return issueToken(admin);
 		} catch (AuthenticationException ex) {
+			if (account.isPresent()) {
+				java.time.Instant lockedUntil = loginAttemptService.recordFailure(account.get().getId());
+				if (lockedUntil != null) {
+					throw loginAttemptService.lockedException(lockedUntil); // tell the user right away
+				}
+			}
 			throw new BadCredentialsException(Messages.AUTH_INVALID_CREDENTIALS, ex);
 		}
 	}

@@ -55,6 +55,15 @@ public class AdminUser {
 	@Column(nullable = false, length = 20)
 	private AdminRole role = AdminRole.ADMIN;
 
+	/** Consecutive wrong passwords since the last successful sign-in or lock. */
+	@Builder.Default
+	@Column(name = "failed_login_attempts", nullable = false)
+	private int failedLoginAttempts = 0;
+
+	/** Sign-in is refused until this instant (null = not locked). */
+	@Column(name = "locked_until")
+	private Instant lockedUntil;
+
 	/**
 	 * Embedded in every JWT. Incrementing it (logout, password change) instantly invalidates
 	 * all tokens issued before — the server-side "log out everywhere" switch.

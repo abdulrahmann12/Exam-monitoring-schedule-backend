@@ -158,9 +158,48 @@ class SecurityHardeningTest {
 					.with(request -> { request.setRemoteAddr("203.0.113.77"); return request; })
 					.header("X-Forwarded-For", "198.51.100." + forged)
 					.contentType(MediaType.APPLICATION_JSON)
-					.content("{\"email\":\"" + ADMIN_EMAIL + "\",\"password\":\"bad-password-x\"}"))
+					// unknown account: isolates the per-IP limiter from the per-account lockout
+					.content("{\"email\":\"nobody@test.local\",\"password\":\"bad-password-x\"}"))
 				.andExpect(status().is(expected));
 		}
+	}
+
+	// ── Account lockout ─────────────────────────────────────────────────────
+
+	@Test
+	void fiveWrongPasswordsLockTheAccountEvenForTheCorrectPassword() throws Exception {
+		for (int attempt = 1; attempt <= 5; attempt++) {
+			int expected = attempt < 5 ? 401 : 423; // the 5th failure locks and says so
+			mockMvc.perform(post("/api/auth/login")
+					.with(request -> { request.setRemoteAddr("203.0.113.90"); return request; })
+					.contentType(MediaType.APPLICATION_JSON)
+					.content("{\"email\":\"" + ADMIN_EMAIL + "\",\"password\":\"wrong-password-" + attempt + "\"}"))
+				.andExpect(status().is(expected));
+		}
+
+		mockMvc.perform(post("/api/auth/login")
+				.with(request -> { request.setRemoteAddr("203.0.113.91"); return request; })
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"email\":\"" + ADMIN_EMAIL + "\",\"password\":\"" + ADMIN_PASSWORD + "\"}"))
+			.andExpect(status().isLocked())
+			.andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("locked")));
+
+		AdminUser locked = adminUserRepository.findByEmailIgnoreCase(ADMIN_EMAIL).orElseThrow();
+		assertThat(locked.getLockedUntil()).isAfter(java.time.Instant.now().plus(java.time.Duration.ofHours(47)));
+	}
+
+	@Test
+	void expiredLockAllowsSignInAndSuccessResetsTheCounter() throws Exception {
+		AdminUser admin = adminUserRepository.findByEmailIgnoreCase(ADMIN_EMAIL).orElseThrow();
+		admin.setLockedUntil(java.time.Instant.now().minusSeconds(60));
+		admin.setFailedLoginAttempts(3);
+		adminUserRepository.save(admin);
+
+		login(ADMIN_PASSWORD);
+
+		AdminUser after = adminUserRepository.findByEmailIgnoreCase(ADMIN_EMAIL).orElseThrow();
+		assertThat(after.getLockedUntil()).isNull();
+		assertThat(after.getFailedLoginAttempts()).isZero();
 	}
 
 	// ── helpers ─────────────────────────────────────────────────────────────

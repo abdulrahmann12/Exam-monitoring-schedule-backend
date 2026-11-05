@@ -100,6 +100,12 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.CONFLICT, Messages.DATA_INTEGRITY_CONFLICT, request);
 	}
 
+	/** Too many wrong passwords — the account is temporarily locked. */
+	@ExceptionHandler(AccountLockedException.class)
+	public ResponseEntity<ApiErrorResponse> handleLocked(RuntimeException ex, HttpServletRequest request) {
+		return buildErrorResponse(HttpStatus.LOCKED, safeMessage(ex), request);
+	}
+
 	// ── 400 BAD REQUEST ───────────────────────────────────────────────────────
 
 	/** Handles simple validation failures without per-field breakdown. */

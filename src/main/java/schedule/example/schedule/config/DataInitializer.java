@@ -122,6 +122,8 @@ public class DataInitializer implements ApplicationRunner {
 				.orElseThrow(() -> new BeanCreationException("Cannot reset password: no account '" + email + "'."));
 			admin.setPasswordHash(passwordEncoder.encode(password));
 			admin.setTokenVersion(admin.getTokenVersion() + 1);
+			admin.setFailedLoginAttempts(0);
+			admin.setLockedUntil(null);
 			adminUserRepository.saveAndFlush(admin);
 			LOGGER.warn("[BOOTSTRAP] Password RESET for '{}' and all sessions revoked. "
 				+ "Remove BOOTSTRAP_ADMIN_RESET_PASSWORD now.", email);
