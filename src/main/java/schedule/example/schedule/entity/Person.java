@@ -29,6 +29,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import schedule.example.schedule.entity.enums.PersonRole;
+import schedule.example.schedule.entity.enums.Gender;
 import schedule.example.schedule.entity.enums.WeekDay;
 import schedule.example.schedule.util.NameNormalizationUtil;
 
@@ -106,6 +107,23 @@ public class Person {
         @Column(nullable = false)
         private int maxParallelRooms = 1;
 
+        /** Optional — required only to staff gender-separated halls. */
+        @Enumerated(EnumType.STRING)
+        @Column(length = 8)
+        private Gender gender;
+
+        /** Subject codes this person teaches; they may not invigilate those exams. Stored upper-case. */
+        @Builder.Default
+        @ElementCollection(fetch = FetchType.LAZY)
+        @CollectionTable(
+                name = "person_subject_codes",
+                joinColumns = @JoinColumn(name = "person_id"),
+                indexes = @Index(name = "idx_person_subject_codes_person_id", columnList = "person_id")
+        )
+        @Column(name = "subject_code", nullable = false, length = 40)
+        @BatchSize(size = 50)
+        private Set<String> subjectCodes = new LinkedHashSet<>();
+
 
         /**
          * Optimistic-locking version. Two concurrent edits of the same row fail with
@@ -159,6 +177,31 @@ public class Person {
         @PreUpdate
         void deriveMaxParallelRooms() {
                 this.maxParallelRooms = parallelRoomsFor(role);
+                this.subjectCodes = normalizeSubjectCodes(subjectCodes);
+        }
+
+        public void setSubjectCodes(Set<String> codes) {
+                this.subjectCodes = normalizeSubjectCodes(codes);
+        }
+
+        /** True when this person teaches {@code subjectCode} (case-insensitive). */
+        public boolean teaches(String subjectCode) {
+                if (subjectCode == null || subjectCode.isBlank() || subjectCodes == null) {
+                        return false;
+                }
+                return subjectCodes.contains(subjectCode.trim().toUpperCase(Locale.ROOT));
+        }
+
+        private static Set<String> normalizeSubjectCodes(Set<String> codes) {
+                Set<String> normalized = new LinkedHashSet<>();
+                if (codes != null) {
+                        for (String code : codes) {
+                                if (code != null && !code.isBlank()) {
+                                        normalized.add(code.trim().toUpperCase(Locale.ROOT));
+                                }
+                        }
+                }
+                return normalized;
         }
 
         private static int parallelRoomsFor(PersonRole role) {

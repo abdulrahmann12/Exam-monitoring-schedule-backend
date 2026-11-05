@@ -1,5 +1,6 @@
 package schedule.example.schedule.dto.assignment;
 
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
@@ -22,6 +23,9 @@ public record PreviewAssignment(
 	String subjectName,
 
 	@Size(max = 40, message = "Subject code must be at most 40 characters")
-	String subjectCode
+	String subjectCode,
+
+	@Min(value = 0, message = "Student count cannot be negative")
+	Integer studentCount
 ) {
 }

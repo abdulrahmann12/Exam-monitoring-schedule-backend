@@ -76,13 +76,88 @@ class SchedulingIntegrationTest {
 	@Autowired private SettingsRepository settingsRepository;
 	@Autowired private MockMvc mockMvc;
 	@Autowired private PeopleService peopleService;
+	@Autowired private AutoAssignmentService autoAssignmentService;
+
+	@Test
+	void previewUsesMatchingToStaffAGenderSeparatedHall() {
+		ScheduleGroup g = group("Halls");
+		TimeSlot slot = slot(g, 9, 12);
+		Room mixed = room("A mixed");
+		Room femaleHall = room("B female");
+		femaleHall.setHallGender(schedule.example.schedule.entity.enums.HallGender.FEMALE);
+		roomRepository.save(femaleHall);
+		Person femaleChief = chief("Chief F");
+		femaleChief.setGender(schedule.example.schedule.entity.enums.Gender.FEMALE);
+		personRepository.save(femaleChief);
+		Person aisha = invigilator("Aisha");   // first by name, the only woman
+		aisha.setGender(schedule.example.schedule.entity.enums.Gender.FEMALE);
+		personRepository.save(aisha);
+		Person bob = invigilator("Bob");
+		bob.setGender(schedule.example.schedule.entity.enums.Gender.MALE);
+		personRepository.save(bob);
+
+		GeneratePreviewResponse preview = assignmentService.generatePreview(new GeneratePreviewRequest(
+			g.getId(), DAY, slot.getId(), List.of(mixed.getId(), femaleHall.getId()), false, List.of()));
+
+		assertThat(preview.conflicts()).isEmpty();
+		assertThat(preview.assignments()).filteredOn(a -> a.roomId().equals(femaleHall.getId()))
+			.singleElement().satisfies(a -> assertThat(a.invigilatorIds()).containsExactly(aisha.getId()));
+		assertThat(preview.assignments()).filteredOn(a -> a.roomId().equals(mixed.getId()))
+			.singleElement().satisfies(a -> assertThat(a.invigilatorIds()).containsExactly(bob.getId()));
+	}
+
+	@Test
+	void excelUploadPathCreatesAndFillsSeatsFromStudentCount() {
+		setStudentsPerInvigilator(30);
+		ScheduleGroup g = group("Excel");
+		TimeSlot slot = slot(g, 9, 12);
+		Room hall = room("Big hall");
+		hall.setCapacity(100);
+		roomRepository.save(hall);
+		chief("C1");
+		for (String name : List.of("I1", "I2", "I3", "I4")) {
+			invigilator(name);
+		}
+		schedule.example.schedule.entity.RoomAssignment uploaded = new schedule.example.schedule.entity.RoomAssignment();
+		uploaded.setScheduleGroup(g);
+		uploaded.setTimeSlot(slot);
+		uploaded.setRoom(hall);
+		uploaded.setExamDate(DAY);
+		uploaded.setStudentCount(70); // needs ceil(70 / 30) = 3 invigilators
+		uploaded = roomAssignmentRepository.save(uploaded);
+
+		AutoAssignmentService.StaffingResult result = autoAssignmentService.assignStaff(g.getId(), List.of(uploaded));
+
+		assertThat(result.invigilatorSlotsTotal()).isEqualTo(3);
+		assertThat(result.invigilatorSlotsFilled()).isEqualTo(3);
+		var saved = roomAssignmentRepository.findDetailedById(uploaded.getId()).orElseThrow();
+		assertThat(saved.getInvigilatorAssignments()).hasSize(3).allSatisfy(seat -> assertThat(seat.getInvigilator()).isNotNull());
+		assertThat(saved.getChiefInvigilator()).isNotNull();
+	}
+
+	@Test
+	void studentCountAboveRoomCapacityIsRejected() {
+		ScheduleGroup g = group("Capacity");
+		Room small = room("Small");
+		assertThatThrownBy(() -> assignmentService.createAssignment(new RoomAssignmentRequest(
+				g.getId(), DAY, small.getId(), slot(g, 9, 12).getId(), null, null, null, false, null, List.of(), 31)))
+			.isInstanceOf(schedule.example.schedule.exception.ValidationException.class)
+			.hasMessageContaining("holds 30 students");
+	}
+
+	private void setStudentsPerInvigilator(int value) {
+		settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID).ifPresent(settings -> {
+			settings.setStudentsPerInvigilator(value);
+			settingsRepository.save(settings);
+		});
+	}
 
 	private final List<UUID> createdGroups = new ArrayList<>();
 
 	@Test
 	void chiefCreatedThroughTheApiMayCoverTwoParallelRooms() {
 		var created = peopleService.createPerson(new schedule.example.schedule.dto.person.PersonRequest(
-			"API Chief", "Exams", null, PersonRole.CHIEF_INVIGILATOR, EnumSet.allOf(WeekDay.class)));
+			"API Chief", "Exams", null, PersonRole.CHIEF_INVIGILATOR, EnumSet.allOf(WeekDay.class), null, null));
 		assertThat(created.maxParallelRooms()).isEqualTo(2);
 
 		ScheduleGroup g = group("Parallel");
@@ -103,6 +178,7 @@ class SchedulingIntegrationTest {
 		createdGroups.forEach(scheduleGroupRepository::deleteById);
 		createdGroups.clear();
 		setMaxDutiesPerDay(0);
+		setStudentsPerInvigilator(0);
 	}
 
 	// ── Cross-group & room conflicts ────────────────────────────────────────
@@ -278,7 +354,7 @@ class SchedulingIntegrationTest {
 		invigilator("Other inv");
 
 		PreviewAssignment locked = new PreviewAssignment(lockedRoom.getId(), keptChief.getId(),
-			List.of(keptInvigilator.getId()), true, "Math", "M101");
+			List.of(keptInvigilator.getId()), true, "Math", "M101", null);
 		GeneratePreviewResponse preview = assignmentService.generatePreview(new GeneratePreviewRequest(
 			g.getId(), DAY, slot.getId(), List.of(lockedRoom.getId(), open.getId()), false, List.of(locked)));
 
@@ -334,12 +410,12 @@ class SchedulingIntegrationTest {
 		}
 		assignmentService.createAssignment(new RoomAssignmentRequest(
 			group.getId(), DAY, room.getId(), slot.getId(), null, null,
-			chief == null ? null : chief.getId(), false, null, ids));
+			chief == null ? null : chief.getId(), false, null, ids, null));
 	}
 
 	private BulkRoomAssignmentRequest bulk(ScheduleGroup group, TimeSlot slot, Room room, Person chief, boolean locked) {
 		return new BulkRoomAssignmentRequest(group.getId(), DAY, room.getId(), slot.getId(), null, null,
-			chief.getId(), locked, Collections.singletonList(null));
+			chief.getId(), locked, Collections.singletonList(null), null);
 	}
 
 	private ScheduleGroup group(String name) {

@@ -90,6 +90,7 @@ public final class Messages {
 	public static final String AUTH_INVALID_CREDENTIALS = "Invalid email or password.";
 	public static final String AUTH_CURRENT_PASSWORD_WRONG = "Current password is incorrect.";
 	public static final String MAIL_NOT_CONFIGURED = "Email sending is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL on the server.";
+	public static final String AUTH_ACCOUNT_LOCKED = "This account is locked after too many failed sign-in attempts. Try again after {0}, or ask your administrator to reset it.";
 	public static final String AUTH_PASSWORD_UNCHANGED = "The new password must be different from the current one.";
 
 	// ==================== Demo Mode Messages ====================
@@ -142,6 +143,11 @@ public final class Messages {
 	public static final String ASSIGNMENT_CHIEF_ON_LEAVE = "Chief invigilator ''{0}'' is on leave on {1}{2}.";
 	public static final String ASSIGNMENT_INVIGILATOR_ON_LEAVE = "Invigilator ''{0}'' is on leave on {1}{2}.";
 	public static final String ASSIGNMENT_DAILY_LIMIT = "''{0}'' would exceed the limit of {1} duty session(s) on {2}.";
+	public static final String ASSIGNMENT_GENDER_MISMATCH = "''{0}'' cannot supervise ''{1}'' — it is a {2}-only hall (set the person''s gender in People).";
+	public static final String ASSIGNMENT_OWN_SUBJECT = "''{0}'' teaches {1} and cannot invigilate its exam.";
+	public static final String ASSIGNMENT_REST_TOO_SHORT = "''{0}'' needs at least {1} minutes of rest between sessions on {2}.";
+	public static final String ASSIGNMENT_PERIOD_LIMIT = "''{0}'' would exceed the limit of {1} duty session(s) in this exam period.";
+	public static final String ASSIGNMENT_STUDENTS_EXCEED_CAPACITY = "Room ''{0}'' holds {1} students, but {2} were entered.";
 	public static final String ASSIGNMENT_LOCKED_DELETE = "Room ''{0}'' on {1} is locked. Unlock it before removing it from the schedule.";
 	public static final String ASSIGNMENT_NO_CHIEF_AVAILABLE = "No available chief invigilator for {0}.";
 	public static final String ASSIGNMENT_INVIGILATORS_UNFILLED = "{0} invigilator slot(s) could not be filled for {1}.";

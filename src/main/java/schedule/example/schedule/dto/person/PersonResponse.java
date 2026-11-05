@@ -1,6 +1,7 @@
 package schedule.example.schedule.dto.person;
 
 import schedule.example.schedule.entity.enums.PersonRole;
+import schedule.example.schedule.entity.enums.Gender;
 import schedule.example.schedule.entity.enums.WeekDay;
 
 import java.time.Instant;
@@ -17,6 +18,8 @@ public record PersonResponse(
 	int totalAssignments,
 	boolean active,
 	int maxParallelRooms,
+	Gender gender,
+	Set<String> subjectCodes,
 	Instant createdAt,
 	Instant updatedAt
 ) {
@@ -31,6 +34,8 @@ public record PersonResponse(
 			nextTotalAssignments,
 			active,
 			maxParallelRooms,
+			gender,
+			subjectCodes,
 			createdAt,
 			updatedAt
 		);

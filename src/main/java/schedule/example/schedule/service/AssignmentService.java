@@ -307,7 +307,9 @@ public class AssignmentService {
         assignment.setChiefInvigilator(chiefInvigilator);
         assignment.setLocked(Boolean.TRUE.equals(request.locked()));
         assignment.setSource(request.source() != null ? request.source() : AssignmentSource.MANUAL);
-        assignment.replaceInvigilatorAssignments(buildInvigilatorAssignments(invigilators, room.getMinInvigilators()));
+        assignment.setStudentCount(validateStudentCount(room, request.studentCount()));
+        assignment.replaceInvigilatorAssignments(buildInvigilatorAssignments(invigilators,
+                contextLoader.settings().requiredInvigilators(room, request.studentCount())));
     }
 
     private void configureBulkAssignmentRelations(
@@ -343,7 +345,9 @@ public class AssignmentService {
         assignment.setChiefInvigilator(chiefInvigilator);
         assignment.setLocked(Boolean.TRUE.equals(request.isLocked()));
         assignment.setSource(AssignmentSource.GENERATED);
-        assignment.replaceInvigilatorAssignments(buildInvigilatorAssignments(invigilators, room.getMinInvigilators()));
+        assignment.setStudentCount(validateStudentCount(room, request.studentCount()));
+        assignment.replaceInvigilatorAssignments(buildInvigilatorAssignments(invigilators,
+                contextLoader.settings().requiredInvigilators(room, request.studentCount())));
     }
 
     private ScheduleGroup resolveAssignmentGroup(UUID requestedGroupId, TimeSlot timeSlot, ScheduleGroup existing) {
@@ -466,6 +470,15 @@ public class AssignmentService {
         }
 
         return ordered;
+    }
+
+    /** Student count is optional, but can never exceed the room's capacity. */
+    private static Integer validateStudentCount(Room room, Integer studentCount) {
+        if (studentCount != null && studentCount > room.getCapacity()) {
+            throw new ValidationException(MessageFormat.format(
+                    Messages.ASSIGNMENT_STUDENTS_EXCEED_CAPACITY, room.getName(), room.getCapacity(), studentCount));
+        }
+        return studentCount;
     }
 
     private List<InvigilatorAssignment> buildInvigilatorAssignments(List<Person> invigilators, int minRequired) {

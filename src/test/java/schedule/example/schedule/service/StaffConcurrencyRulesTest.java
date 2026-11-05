@@ -131,6 +131,88 @@ class StaffConcurrencyRulesTest {
 		assertThat(tracker.minutesFor(chief.getId())).isEqualTo(180 + 60);
 	}
 
+	@Test
+	void genderSeparatedHallNeedsStaffOfThatGender() {
+		Room femaleHall = room("Female Hall");
+		femaleHall.setHallGender(schedule.example.schedule.entity.enums.HallGender.FEMALE);
+		Person ali = invigilator("Ali");
+		ali.setGender(schedule.example.schedule.entity.enums.Gender.MALE);
+		Person unknown = invigilator("No gender set");
+		Person mona = invigilator("Mona");
+		mona.setGender(schedule.example.schedule.entity.enums.Gender.FEMALE);
+
+		RoomAssignment ra = assignment(groupA, slot(groupA, 9, 12), femaleHall, null);
+		SchedulingContext context = context(List.of(ra));
+
+		assertThat(StaffConcurrencyRules.canTakeSeat(ali, false, ra, context)).isFalse();
+		assertThat(StaffConcurrencyRules.canTakeSeat(unknown, false, ra, context)).isFalse();
+		assertThat(StaffConcurrencyRules.canTakeSeat(mona, false, ra, context)).isTrue();
+		assertThat(StaffConcurrencyRules.canTakeSeat(ali, false, assignment(groupA, slot(groupA, 9, 12), room("Mixed"), null), context))
+			.isTrue();
+	}
+
+	@Test
+	void teacherCannotInvigilateTheirOwnSubject() {
+		Person sara = invigilator("Sara");
+		sara.setSubjectCodes(java.util.Set.of("math101 "));
+		RoomAssignment maths = assignment(groupA, slot(groupA, 9, 12), room("R1"), null, sara);
+		maths.setSubjectCode("MATH101");
+
+		assertThat(StaffConcurrencyRules.findViolations(maths, context(List.of(maths))))
+			.singleElement().asString().contains("teaches MATH101");
+
+		maths.setSubjectCode("PHYS101");
+		assertThat(StaffConcurrencyRules.findViolations(maths, context(List.of(maths)))).isEmpty();
+	}
+
+	@Test
+	void minimumRestBetweenSessionsIsEnforced() {
+		Person omar = invigilator("Omar");
+		RoomAssignment morning = assignment(groupA, slot(groupA, 9, 11), room("R1"), null, omar);
+		RoomAssignment noon = assignment(groupA, slot(groupA, 11, 13), room("R2"), null, omar);    // 0 min gap
+		List<RoomAssignment> universe = List.of(morning, noon);
+
+		SchedulingContext oneHourRest = new SchedulingContext(universe, Map.of(), new SchedulingSettings(0, 0, 60, 0));
+		assertThat(StaffConcurrencyRules.findViolations(noon, oneHourRest))
+			.singleElement().asString().contains("60 minutes of rest");
+
+		RoomAssignment afternoon = assignment(groupA, slot(groupA, 12, 14), room("R3"), null, omar); // 60 min after 11:00
+		SchedulingContext ok = new SchedulingContext(List.of(morning, afternoon), Map.of(), new SchedulingSettings(0, 0, 60, 0));
+		assertThat(StaffConcurrencyRules.findViolations(afternoon, ok)).isEmpty();
+	}
+
+	@Test
+	void maxDutiesPerExamPeriodCountsAllDatesOfTheGroup() {
+		Person hana = invigilator("Hana");
+		RoomAssignment day1 = assignment(groupA, slot(groupA, 9, 12), room("R1"), null, hana);
+		RoomAssignment day2 = assignment(groupA, slot(groupA, 9, 12), room("R1"), null, hana);
+		day2.setExamDate(DAY.plusDays(1));
+		RoomAssignment day3 = assignment(groupA, slot(groupA, 9, 12), room("R1"), null, hana);
+		day3.setExamDate(DAY.plusDays(2));
+		RoomAssignment otherGroup = assignment(groupB, slot(groupB, 14, 16), room("B1"), null, hana);
+		List<RoomAssignment> universe = List.of(day1, day2, day3, otherGroup);
+
+		SchedulingContext limitTwo = new SchedulingContext(universe, Map.of(), new SchedulingSettings(0, 2, 0, 0));
+		assertThat(StaffConcurrencyRules.findViolations(day3, limitTwo))
+			.singleElement().asString().contains("limit of 2");
+
+		SchedulingContext limitThree = new SchedulingContext(universe, Map.of(), new SchedulingSettings(0, 3, 0, 0));
+		assertThat(StaffConcurrencyRules.findViolations(day3, limitThree)).isEmpty(); // other group not counted
+	}
+
+	@Test
+	void requiredInvigilatorsFollowStudentCount() {
+		Room hall = room("Hall");
+		hall.setMinInvigilators(1);
+		SchedulingSettings onePer30 = new SchedulingSettings(0, 0, 0, 30);
+
+		assertThat(onePer30.requiredInvigilators(hall, null)).isEqualTo(1);
+		assertThat(onePer30.requiredInvigilators(hall, 30)).isEqualTo(1);
+		assertThat(onePer30.requiredInvigilators(hall, 31)).isEqualTo(2);
+		assertThat(onePer30.requiredInvigilators(hall, 95)).isEqualTo(4);
+		assertThat(SchedulingSettings.NONE.requiredInvigilators(hall, 95)).isEqualTo(1);
+	}
+
 	// ── builders ────────────────────────────────────────────────────────────
 
 	private static SchedulingContext context(List<RoomAssignment> universe) {

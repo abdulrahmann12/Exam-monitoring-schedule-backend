@@ -207,7 +207,7 @@ public interface RoomAssignmentRepository extends JpaRepository<RoomAssignment, 
 
 	/** Chief duty windows in a group — input for minute-based workload fairness. */
 	@Query("""
-		select ra.chiefInvigilator.id as personId, ra.examDate as examDate,
+		select ra.id as assignmentId, ra.chiefInvigilator.id as personId, ra.examDate as examDate,
 		       ts.startTime as startTime, ts.endTime as endTime
 		from RoomAssignment ra join ra.timeSlot ts
 		where ra.scheduleGroup.id = :groupId and ra.chiefInvigilator is not null
@@ -216,7 +216,7 @@ public interface RoomAssignmentRepository extends JpaRepository<RoomAssignment, 
 
 	/** Invigilator duty windows in a group — input for minute-based workload fairness. */
 	@Query("""
-		select ia.invigilator.id as personId, ra.examDate as examDate,
+		select ra.id as assignmentId, ia.invigilator.id as personId, ra.examDate as examDate,
 		       ts.startTime as startTime, ts.endTime as endTime
 		from InvigilatorAssignment ia join ia.roomAssignment ra join ra.timeSlot ts
 		where ra.scheduleGroup.id = :groupId and ia.invigilator is not null

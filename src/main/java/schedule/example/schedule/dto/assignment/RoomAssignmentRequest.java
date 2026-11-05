@@ -1,5 +1,6 @@
 package schedule.example.schedule.dto.assignment;
 
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
@@ -35,6 +36,9 @@ public record RoomAssignmentRequest(
 		AssignmentSource source,
 
 		@NotNull(message = "Invigilator ids list is required")
-		List<UUID> invigilatorIds
+		List<UUID> invigilatorIds,
+
+		@Min(value = 0, message = "Student count cannot be negative")
+		Integer studentCount
 ) {
 }

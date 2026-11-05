@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import schedule.example.schedule.entity.enums.RoomType;
+import schedule.example.schedule.entity.enums.HallGender;
 
 public record RoomRequest(
 	@NotBlank(message = "Room name is required")
@@ -19,6 +20,9 @@ public record RoomRequest(
 	RoomType type,
 
 	@Min(value = 0, message = "Minimum invigilators cannot be negative")
-	int minInvigilators
+	int minInvigilators,
+
+	/** Optional, defaults to MIXED (anyone may supervise). */
+	HallGender hallGender
 ) {
 }

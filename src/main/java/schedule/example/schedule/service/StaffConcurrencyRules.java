@@ -8,6 +8,7 @@ import schedule.example.schedule.entity.Person;
 import schedule.example.schedule.entity.PersonUnavailability;
 import schedule.example.schedule.entity.RoomAssignment;
 import schedule.example.schedule.entity.TimeSlot;
+import schedule.example.schedule.entity.enums.HallGender;
 import schedule.example.schedule.entity.enums.WeekDay;
 import schedule.example.schedule.repository.PersonRepository;
 
@@ -36,6 +37,10 @@ import java.util.UUID;
  *   <li><b>Parallel rooms</b> — a chief may cover at most {@link Person#getMaxParallelRooms()}
  *       rooms at overlapping times; an invigilator exactly one.</li>
  *   <li><b>Daily limit</b> — optional cap on separate duty sessions per person per day.</li>
+ *   <li><b>Hall gender</b> — gender-separated halls only accept staff of that gender.</li>
+ *   <li><b>Own subject</b> — nobody invigilates an exam whose subject code they teach.</li>
+ *   <li><b>Rest</b> — optional minimum break between two sessions of one person on a day.</li>
+ *   <li><b>Period limit</b> — optional cap on sessions per person in one exam period.</li>
  * </ol>
  *
  * <p>"Overlapping" always compares real start/end times, never time-slot ids, so slots from
@@ -219,6 +224,16 @@ public class StaffConcurrencyRules {
             return Optional.of(MessageFormat.format(pattern, person.getName(), date, reason));
         }
 
+        HallGender hall = current.getRoom() == null ? null : current.getRoom().getHallGender();
+        if (hall != null && hall != HallGender.MIXED && !hall.name().equals(person.getGender() == null ? null : person.getGender().name())) {
+            return Optional.of(MessageFormat.format(Messages.ASSIGNMENT_GENDER_MISMATCH,
+                    person.getName(), current.getRoom().getName(), hall.name().toLowerCase(java.util.Locale.ROOT)));
+        }
+
+        if (person.teaches(current.getSubjectCode())) {
+            return Optional.of(MessageFormat.format(Messages.ASSIGNMENT_OWN_SUBJECT, person.getName(), current.getSubjectCode()));
+        }
+
         if (asChief) {
             int parallel = countOverlappingChiefRooms(context.universe(), current, person.getId());
             if (parallel >= person.getMaxParallelRooms()) {
@@ -232,7 +247,82 @@ public class StaffConcurrencyRules {
         if (limit > 0 && countOtherSessionsOnDate(context.universe(), current, person.getId()) + 1 > limit) {
             return Optional.of(MessageFormat.format(Messages.ASSIGNMENT_DAILY_LIMIT, person.getName(), limit, date));
         }
+
+        int minRest = context.settings().minRestMinutes();
+        if (minRest > 0) {
+            Optional<Long> shortest = shortestGapMinutes(context.universe(), current, person.getId());
+            if (shortest.isPresent() && shortest.get() < minRest) {
+                return Optional.of(MessageFormat.format(Messages.ASSIGNMENT_REST_TOO_SHORT, person.getName(), minRest, date));
+            }
+        }
+
+        int periodLimit = context.settings().maxDutiesPerPeriod();
+        if (periodLimit > 0 && current.getScheduleGroup() != null
+                && countOtherSessionsInPeriod(context, current, person.getId()) + 1 > periodLimit) {
+            return Optional.of(MessageFormat.format(Messages.ASSIGNMENT_PERIOD_LIMIT, person.getName(), periodLimit));
+        }
         return Optional.empty();
+    }
+
+    /**
+     * Shortest break (minutes) between {@code current} and any other, non-overlapping session of the
+     * person on the same date. Empty when the person has no other session that day.
+     */
+    static Optional<Long> shortestGapMinutes(List<RoomAssignment> universe, RoomAssignment current, UUID personId) {
+        TimeSlot slot = current.getTimeSlot();
+        if (slot == null || slot.getStartTime() == null || slot.getEndTime() == null) {
+            return Optional.empty();
+        }
+        Long shortest = null;
+        for (RoomAssignment other : universe) {
+            if (isSameRow(current, other) || !current.getExamDate().equals(other.getExamDate())
+                    || other.getTimeSlot() == null || overlaps(slot, other.getTimeSlot())) {
+                continue;
+            }
+            boolean involved = (other.getChiefInvigilator() != null && personId.equals(other.getChiefInvigilator().getId()))
+                    || holdsInvigilatorSeat(other, personId);
+            if (!involved) {
+                continue;
+            }
+            TimeSlot o = other.getTimeSlot();
+            long gap = !o.getEndTime().isAfter(slot.getStartTime())
+                    ? java.time.Duration.between(o.getEndTime(), slot.getStartTime()).toMinutes()
+                    : java.time.Duration.between(slot.getEndTime(), o.getStartTime()).toMinutes();
+            shortest = shortest == null ? gap : Math.min(shortest, gap);
+        }
+        return Optional.ofNullable(shortest);
+    }
+
+    /**
+     * Separate sessions the person already has in the current assignment's exam period (schedule
+     * group), across all dates — persisted ones plus unsaved ones in the universe — excluding the
+     * current sitting itself.
+     */
+    static int countOtherSessionsInPeriod(SchedulingContext context, RoomAssignment current, UUID personId) {
+        UUID groupId = current.getScheduleGroup().getId();
+        String currentKey = sittingKey(current.getExamDate(), current.getTimeSlot());
+        Set<String> sessions = new HashSet<>();
+        for (var window : context.persistedGroupWindows(groupId)) {
+            if (personId.equals(window.getPersonId())) {
+                sessions.add(window.getExamDate() + "@" + window.getStartTime() + "-" + window.getEndTime());
+            }
+        }
+        for (RoomAssignment other : context.universe()) {
+            if (isSameRow(current, other) || other.getScheduleGroup() == null || !groupId.equals(other.getScheduleGroup().getId())) {
+                continue;
+            }
+            boolean involved = (other.getChiefInvigilator() != null && personId.equals(other.getChiefInvigilator().getId()))
+                    || holdsInvigilatorSeat(other, personId);
+            if (involved) {
+                sessions.add(sittingKey(other.getExamDate(), other.getTimeSlot()));
+            }
+        }
+        sessions.remove(currentKey);
+        return sessions.size();
+    }
+
+    private static String sittingKey(LocalDate date, TimeSlot slot) {
+        return date + "@" + (slot == null ? "?" : slot.getStartTime() + "-" + slot.getEndTime());
     }
 
     public static String describeSlot(TimeSlot slot) {

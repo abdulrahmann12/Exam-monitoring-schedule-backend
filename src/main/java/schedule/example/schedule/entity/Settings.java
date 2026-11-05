@@ -55,4 +55,22 @@ public class Settings {
 	@Builder.Default
 	@Column(name = "max_duties_per_day", nullable = false)
 	private int maxDutiesPerDay = 0;
+
+	/** Max separate duty sessions per person in one exam period (schedule group); 0 = unlimited. */
+	@Builder.Default
+	@Column(name = "max_duties_per_period", nullable = false)
+	private int maxDutiesPerPeriod = 0;
+
+	/** Minimum break, in minutes, between two sessions of the same person on one day; 0 = none. */
+	@Builder.Default
+	@Column(name = "min_rest_minutes", nullable = false)
+	private int minRestMinutes = 0;
+
+	/**
+	 * One invigilator per this many students (e.g. 30). Rooms with a student count then need
+	 * max(room minimum, ceil(students / value)) invigilators. 0 = always use the room minimum.
+	 */
+	@Builder.Default
+	@Column(name = "students_per_invigilator", nullable = false)
+	private int studentsPerInvigilator = 0;
 }

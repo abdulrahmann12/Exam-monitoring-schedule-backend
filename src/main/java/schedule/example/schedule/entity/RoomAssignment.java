@@ -100,6 +100,10 @@ public class RoomAssignment {
         @Column(length = 40)
         private String subjectCode;
 
+        /** Students sitting this exam in this room (optional). Drives the required invigilator count. */
+        @Column(name = "student_count")
+        private Integer studentCount;
+
         @ToString.Exclude
         @ManyToOne(fetch = FetchType.LAZY)
         @JoinColumn(name = "chief_invigilator_id")

@@ -9,6 +9,8 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -21,6 +23,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import schedule.example.schedule.entity.enums.RoomType;
+import schedule.example.schedule.entity.enums.HallGender;
 import schedule.example.schedule.util.NameNormalizationUtil;
 
 import java.time.Instant;
@@ -68,6 +71,20 @@ public class Room {
 	@Builder.Default
 	@Column(nullable = false)
 	private boolean active = true;
+
+	/** MIXED = anyone may supervise; MALE/FEMALE = only staff of that gender (gender-separated halls). */
+	@Builder.Default
+	@Enumerated(EnumType.STRING)
+	@Column(name = "hall_gender", nullable = false, length = 8)
+	private HallGender hallGender = HallGender.MIXED;
+
+	@PrePersist
+	@PreUpdate
+	void defaultHallGender() {
+		if (hallGender == null) {
+			hallGender = HallGender.MIXED;
+		}
+	}
 
 	@CreatedDate
 	@Column(nullable = false, updatable = false)

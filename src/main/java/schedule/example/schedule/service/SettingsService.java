@@ -72,7 +72,10 @@ public class SettingsService {
 			response.universityName(),
 			response.department(),
 			examPeriod,
-			response.maxDutiesPerDay()
+			response.maxDutiesPerDay(),
+			response.maxDutiesPerPeriod(),
+			response.minRestMinutes(),
+			response.studentsPerInvigilator()
 		);
 	}
 }

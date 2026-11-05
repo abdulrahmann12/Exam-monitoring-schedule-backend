@@ -48,6 +48,7 @@ The full annotated list is in [`.env.example`](.env.example).
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | first start | Creates the first admin when none exists. Never overwrites an existing password |
 | `BOOTSTRAP_ADMIN_RESET_PASSWORD` | — | `true` for one restart to reset that admin's password (recovery) |
 | `JWT_EXPIRATION_MINUTES`         | — | Session length, default 720 (12 h) |
+| `LOGIN_MAX_FAILED_ATTEMPTS` / `LOGIN_LOCK_DURATION_MINUTES` | — | Account lockout: default 5 wrong passwords → locked 2880 min (2 days). Unlock early with `BOOTSTRAP_ADMIN_RESET_PASSWORD` |
 | `DEMO_MODE_ENABLED`              | — | `true` only on a public demo deployment; demo sessions are read-only |
 | `BREVO_API_KEY` / `BREVO_SENDER_EMAIL` | — | Enables "notify staff" emails |
 

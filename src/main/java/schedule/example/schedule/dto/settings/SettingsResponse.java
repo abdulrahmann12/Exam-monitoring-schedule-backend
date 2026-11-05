@@ -13,6 +13,9 @@ public record SettingsResponse(
 	String universityName,
 	String department,
 	String examPeriod,
-	int maxDutiesPerDay
+	int maxDutiesPerDay,
+	int maxDutiesPerPeriod,
+	int minRestMinutes,
+	int studentsPerInvigilator
 ) {
 }

@@ -20,6 +20,7 @@ public record RoomAssignmentResponse(
 	LocalTime endTime,
 	String subjectName,
 	String subjectCode,
+	Integer studentCount,
 	UUID chiefInvigilatorId,
 	String chiefInvigilatorName,
 	boolean locked,

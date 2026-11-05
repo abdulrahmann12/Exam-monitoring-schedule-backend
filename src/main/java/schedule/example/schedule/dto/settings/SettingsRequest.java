@@ -36,6 +36,21 @@ public record SettingsRequest(
 	/** Max separate duty sessions per person per day; 0 = unlimited. Omit to keep the current value. */
 	@Min(value = 0, message = "Max duties per day cannot be negative")
 	@Max(value = 12, message = "Max duties per day must be at most 12")
-	Integer maxDutiesPerDay
+	Integer maxDutiesPerDay,
+
+	/** Max duty sessions per person per exam period; 0 = unlimited. */
+	@Min(value = 0, message = "Max duties per period cannot be negative")
+	@Max(value = 500, message = "Max duties per period must be at most 500")
+	Integer maxDutiesPerPeriod,
+
+	/** Minimum break between two sessions of one person on the same day, in minutes; 0 = none. */
+	@Min(value = 0, message = "Minimum rest cannot be negative")
+	@Max(value = 600, message = "Minimum rest must be at most 600 minutes")
+	Integer minRestMinutes,
+
+	/** One invigilator per N students; 0 = use each room's minimum. */
+	@Min(value = 0, message = "Students per invigilator cannot be negative")
+	@Max(value = 1000, message = "Students per invigilator must be at most 1000")
+	Integer studentsPerInvigilator
 ) {
 }
