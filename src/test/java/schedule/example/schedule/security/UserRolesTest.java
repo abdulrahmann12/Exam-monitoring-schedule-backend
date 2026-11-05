@@ -21,6 +21,7 @@ import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.exception.BusinessRuleViolationException;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.repository.PersonRepository;
+import schedule.example.schedule.service.SessionService;
 import schedule.example.schedule.service.UserManagementService;
 
 import java.time.Instant;
@@ -61,6 +62,9 @@ class UserRolesTest {
 	@Autowired private PasswordEncoder passwordEncoder;
 	@Autowired private JwtTokenProvider jwt;
 	@Autowired private UserManagementService userManagementService;
+	@Autowired private SessionService sessionService;
+
+	private static final String CSRF_HEADER = "X-Requested-With";
 
 	@BeforeEach
 	void createAccounts() {
@@ -131,8 +135,7 @@ class UserRolesTest {
 			.andExpect(jsonPath("$.mustChangePassword").value(true))
 			.andExpect(jsonPath("$.passwordHash").doesNotExist());
 
-		String temporary = login(email, "temporary-pass-1").andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
-		String tempToken = objectMapper.readTree(temporary).get("accessToken").asText();
+		String tempToken = login(email, "temporary-pass-1").andExpect(status().isOk()).andReturn().getResponse().getCookie("ug_access").getValue();
 
 		mockMvc.perform(authed(get("/api/auth/me"), tempToken)).andExpect(jsonPath("$.mustChangePassword").value(true));
 		mockMvc.perform(authed(get("/api/people"), tempToken))
@@ -140,11 +143,10 @@ class UserRolesTest {
 			.andExpect(jsonPath("$.message").value("You must change your password before continuing."));
 		mockMvc.perform(json(post("/api/people"), tempToken, PERSON_JSON)).andExpect(status().isForbidden());
 
-		String changed = mockMvc.perform(json(post("/api/auth/change-password"), tempToken, """
+		String newToken = mockMvc.perform(json(post("/api/auth/change-password"), tempToken, """
 				{"currentPassword":"temporary-pass-1","newPassword":"my-own-password-1"}
 				"""))
-			.andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
-		String newToken = objectMapper.readTree(changed).get("accessToken").asText();
+			.andExpect(status().isOk()).andReturn().getResponse().getCookie("ug_access").getValue();
 
 		mockMvc.perform(authed(get("/api/auth/me"), newToken)).andExpect(jsonPath("$.mustChangePassword").value(false));
 		mockMvc.perform(authed(get("/api/people"), newToken)).andExpect(status().isOk());
@@ -243,7 +245,7 @@ class UserRolesTest {
 		mockMvc.perform(json(put("/api/users/" + demo.getId()), admin, "{\"role\":\"ADMIN\",\"enabled\":true}"))
 			.andExpect(status().isUnprocessableEntity());
 		mockMvc.perform(authed(delete("/api/users/" + demo.getId()), admin)).andExpect(status().isUnprocessableEntity());
-		mockMvc.perform(authed(get("/api/users"), jwt.generateToken(demo.getEmail(), 0).token())).andExpect(status().isForbidden());
+		mockMvc.perform(authed(get("/api/users"), token(demo.getEmail()))).andExpect(status().isForbidden());
 	}
 
 	// ── Disable, unlock, reset ──────────────────────────────────────────────
@@ -319,12 +321,13 @@ class UserRolesTest {
 
 	private String token(String email) {
 		AdminUser user = users.findByEmailIgnoreCase(email).orElseThrow();
-		return jwt.generateToken(user.getEmail(), user.getTokenVersion()).token();
+		var session = sessionService.start(user, null).session();
+		return jwt.generateToken(user.getEmail(), user.getTokenVersion(), session.getId()).token();
 	}
 
 	private ResultActions login(String email, String password) throws Exception {
 		String ip = "198.18.0." + IP.getAndIncrement(); // fresh IP per sign-in: keeps the per-IP limiter out of the way
-		return mockMvc.perform(post("/api/auth/login")
+		return mockMvc.perform(post("/api/auth/login").header(CSRF_HEADER, "XMLHttpRequest")
 			.with(request -> { request.setRemoteAddr(ip); return request; })
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(objectMapper.writeValueAsString(new java.util.HashMap<>(java.util.Map.of("email", email, "password", password)))));
@@ -341,6 +344,6 @@ class UserRolesTest {
 	}
 
 	private static MockHttpServletRequestBuilder authed(MockHttpServletRequestBuilder builder, String token) {
-		return builder.header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+		return builder.header(HttpHeaders.AUTHORIZATION, "Bearer " + token).header(CSRF_HEADER, "XMLHttpRequest");
 	}
 }

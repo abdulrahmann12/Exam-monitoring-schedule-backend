@@ -1,6 +1,5 @@
 package schedule.example.schedule.security;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -14,12 +13,15 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+import jakarta.servlet.http.Cookie;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import schedule.example.schedule.config.DataInitializer;
 import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.repository.AdminUserRepository;
+import schedule.example.schedule.service.SessionService;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
@@ -47,6 +49,9 @@ class SecurityHardeningTest {
 	@Autowired private PasswordEncoder passwordEncoder;
 	@Autowired private JwtTokenProvider jwtTokenProvider;
 	@Autowired private DataInitializer dataInitializer;
+	@Autowired private SessionService sessionService;
+
+	private static final String CSRF_HEADER = "X-Requested-With";
 
 	@BeforeEach
 	void createAccounts() {
@@ -66,7 +71,7 @@ class SecurityHardeningTest {
 
 	@Test
 	void demoTokenCanReadButCannotWrite() throws Exception {
-		String demo = jwtTokenProvider.generateToken(DEMO_EMAIL, 0).token();
+		String demo = tokenFor(DEMO_EMAIL);
 
 		mockMvc.perform(authed(get("/api/people"), demo)).andExpect(status().isOk());
 		mockMvc.perform(authed(post("/api/people"), demo)
@@ -90,13 +95,19 @@ class SecurityHardeningTest {
 	// ── Token revocation ────────────────────────────────────────────────────
 
 	@Test
-	void logoutRevokesTheTokenOnTheServer() throws Exception {
-		String token = login(ADMIN_PASSWORD);
-		mockMvc.perform(authed(get("/api/auth/me"), token)).andExpect(status().isOk());
+	void logoutEndsTheSessionOnTheServer() throws Exception {
+		MvcResult signIn = loginResult(ADMIN_PASSWORD);
+		Cookie access = signIn.getResponse().getCookie("ug_access");
+		Cookie refresh = signIn.getResponse().getCookie("ug_refresh");
+		mockMvc.perform(get("/api/auth/me").cookie(access)).andExpect(status().isOk());
 
-		mockMvc.perform(authed(post("/api/auth/logout"), token)).andExpect(status().isNoContent());
+		mockMvc.perform(post("/api/auth/logout").cookie(access, refresh).header(CSRF_HEADER, "XMLHttpRequest"))
+			.andExpect(status().isNoContent());
 
-		mockMvc.perform(authed(get("/api/auth/me"), token)).andExpect(status().isUnauthorized());
+		// The copied access cookie dies with the session, not only when it expires.
+		mockMvc.perform(get("/api/auth/me").cookie(access)).andExpect(status().isUnauthorized());
+		mockMvc.perform(post("/api/auth/refresh").cookie(refresh).header(CSRF_HEADER, "XMLHttpRequest"))
+			.andExpect(status().isUnauthorized());
 	}
 
 	@Test
@@ -119,12 +130,11 @@ class SecurityHardeningTest {
 				.content("{\"currentPassword\":\"wrong-password-1\",\"newPassword\":\"brand-new-password-1\"}"))
 			.andExpect(status().isBadRequest());
 
-		String body = mockMvc.perform(authed(post("/api/auth/change-password"), oldToken)
+		String newToken = mockMvc.perform(authed(post("/api/auth/change-password"), oldToken)
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"currentPassword\":\"" + ADMIN_PASSWORD + "\",\"newPassword\":\"brand-new-password-1\"}"))
 			.andExpect(status().isOk())
-			.andReturn().getResponse().getContentAsString();
-		String newToken = objectMapper.readTree(body).get("accessToken").asText();
+			.andReturn().getResponse().getCookie("ug_access").getValue();
 
 		mockMvc.perform(authed(get("/api/auth/me"), oldToken)).andExpect(status().isUnauthorized());
 		mockMvc.perform(authed(get("/api/auth/me"), newToken)).andExpect(status().isOk());
@@ -154,7 +164,7 @@ class SecurityHardeningTest {
 		for (int attempt = 1; attempt <= 11; attempt++) {
 			int expected = attempt <= 10 ? 401 : 429;
 			int forged = attempt;
-			mockMvc.perform(post("/api/auth/login")
+			mockMvc.perform(post("/api/auth/login").header(CSRF_HEADER, "XMLHttpRequest")
 					.with(request -> { request.setRemoteAddr("203.0.113.77"); return request; })
 					.header("X-Forwarded-For", "198.51.100." + forged)
 					.contentType(MediaType.APPLICATION_JSON)
@@ -170,14 +180,14 @@ class SecurityHardeningTest {
 	void fiveWrongPasswordsLockTheAccountEvenForTheCorrectPassword() throws Exception {
 		for (int attempt = 1; attempt <= 5; attempt++) {
 			int expected = attempt < 5 ? 401 : 423; // the 5th failure locks and says so
-			mockMvc.perform(post("/api/auth/login")
+			mockMvc.perform(post("/api/auth/login").header(CSRF_HEADER, "XMLHttpRequest")
 					.with(request -> { request.setRemoteAddr("203.0.113.90"); return request; })
 					.contentType(MediaType.APPLICATION_JSON)
 					.content("{\"email\":\"" + ADMIN_EMAIL + "\",\"password\":\"wrong-password-" + attempt + "\"}"))
 				.andExpect(status().is(expected));
 		}
 
-		mockMvc.perform(post("/api/auth/login")
+		mockMvc.perform(post("/api/auth/login").header(CSRF_HEADER, "XMLHttpRequest")
 				.with(request -> { request.setRemoteAddr("203.0.113.91"); return request; })
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"email\":\"" + ADMIN_EMAIL + "\",\"password\":\"" + ADMIN_PASSWORD + "\"}"))
@@ -205,16 +215,24 @@ class SecurityHardeningTest {
 	// ── helpers ─────────────────────────────────────────────────────────────
 
 	private String login(String password) throws Exception {
-		String body = mockMvc.perform(post("/api/auth/login")
+		return loginResult(password).getResponse().getCookie("ug_access").getValue();
+	}
+
+	private MvcResult loginResult(String password) throws Exception {
+		return mockMvc.perform(post("/api/auth/login").header(CSRF_HEADER, "XMLHttpRequest")
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{\"email\":\"" + ADMIN_EMAIL + "\",\"password\":\"" + password + "\"}"))
 			.andExpect(status().isOk())
-			.andReturn().getResponse().getContentAsString();
-		JsonNode json = objectMapper.readTree(body);
-		return json.get("accessToken").asText();
+			.andReturn();
+	}
+
+	private String tokenFor(String email) {
+		AdminUser user = adminUserRepository.findByEmailIgnoreCase(email).orElseThrow();
+		var session = sessionService.start(user, null).session();
+		return jwtTokenProvider.generateToken(user.getEmail(), user.getTokenVersion(), session.getId()).token();
 	}
 
 	private static MockHttpServletRequestBuilder authed(MockHttpServletRequestBuilder builder, String token) {
-		return builder.header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+		return builder.header(HttpHeaders.AUTHORIZATION, "Bearer " + token).header(CSRF_HEADER, "XMLHttpRequest");
 	}
 }
