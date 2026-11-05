@@ -120,6 +120,7 @@ public class AutoAssignmentService {
 		}
 
 		List<PreviewAssignment> current = request.current() == null ? List.of() : request.current();
+		SchedulingSettings settings = contextLoader.settings();
 		Set<UUID> selectedRoomIds = new LinkedHashSet<>(request.roomIds());
 
 		Set<UUID> roomIds = new HashSet<>(selectedRoomIds);
@@ -151,7 +152,8 @@ public class AutoAssignmentService {
 			boolean selected = selectedRoomIds.contains(item.roomId());
 			boolean keep = item.locked() || (request.regenerateUnlocked() && !selected);
 			if (keep) {
-				result.add(toTransient(item, roomsById.get(item.roomId()), slot, group, request, peopleById));
+				Room room = roomsById.get(item.roomId());
+				result.add(toTransient(item, room, slot, group, request, peopleById, settings.requiredInvigilators(room, item.studentCount())));
 				handledRooms.add(item.roomId());
 			}
 		}
@@ -163,7 +165,9 @@ public class AutoAssignmentService {
 			}
 			Room room = roomsById.get(roomId);
 			PreviewAssignment previous = currentByRoom.get(roomId);
-			int seats = room.getMinInvigilators();
+			Integer studentCount = previous == null ? null : previous.studentCount();
+			int required = settings.requiredInvigilators(room, studentCount);
+			int seats = required;
 			if (request.regenerateUnlocked() && previous != null) {
 				seats = Math.max(seats, previous.invigilatorIds().size());
 			}
@@ -171,8 +175,9 @@ public class AutoAssignmentService {
 			if (previous != null) {
 				fresh.setSubjectName(previous.subjectName());
 				fresh.setSubjectCode(previous.subjectCode());
+				fresh.setStudentCount(previous.studentCount());
 			}
-			fresh.replaceInvigilatorAssignments(emptySeats(Math.max(seats, 0), room.getMinInvigilators()));
+			fresh.replaceInvigilatorAssignments(emptySeats(Math.max(seats, 0), required));
 			result.add(fresh);
 			toStaff.add(fresh);
 			handledRooms.add(roomId);
@@ -208,6 +213,10 @@ public class AutoAssignmentService {
 	/**
 	 * Fills empty chief/invigilator seats of {@code targets}. Targets must already be in
 	 * {@code context.universe()}. Mutates the targets in memory only.
+	 *
+	 * <p>Works sitting by sitting (same date and time window), chronologically. Within a sitting the
+	 * seats are filled with a maximum matching ({@link SeatMatcher}), so the number of filled seats
+	 * is the best possible, while the least-loaded eligible people are preferred.
 	 */
 	private StaffingRun staff(UUID scheduleGroupId, List<RoomAssignment> targets, SchedulingContext context) {
 		StaffingRun run = new StaffingRun();
@@ -229,85 +238,156 @@ public class AutoAssignmentService {
 			.filter(ra -> ra.getScheduleGroup() != null && scheduleGroupId.equals(ra.getScheduleGroup().getId()))
 			.forEach(workload::recordAll);
 
-		List<RoomAssignment> ordered = targets.stream()
-			.sorted(Comparator
-				.comparing(RoomAssignment::getExamDate)
-				.thenComparing(ra -> ra.getTimeSlot().getStartTime())
-				.thenComparing(ra -> ra.getRoom().getName()))
-			.toList();
+		// Every room gets at least the number of invigilator seats it requires.
+		SchedulingSettings settings = context.settings();
+		for (RoomAssignment target : targets) {
+			ensureSeats(target, settings.requiredInvigilators(target.getRoom(), target.getStudentCount()));
+		}
 
-		for (RoomAssignment assignment : ordered) {
-			String location = describeAssignment(assignment);
+		Map<String, List<RoomAssignment>> sittings = new java.util.TreeMap<>();
+		for (RoomAssignment target : targets) {
+			String key = target.getExamDate() + "@" + target.getTimeSlot().getStartTime() + "-" + target.getTimeSlot().getEndTime();
+			sittings.computeIfAbsent(key, k -> new ArrayList<>()).add(target);
+		}
 
-			if (assignment.getChiefInvigilator() == null) {
-				Person chief = pick(chiefs, true, assignment, context, workload, Set.of());
-				if (chief != null) {
-					assignment.setChiefInvigilator(chief);
-					workload.record(chief.getId(), assignment);
-					run.chiefSlotsFilled++;
-				} else {
-					run.warnings.add(MessageFormat.format(Messages.ASSIGNMENT_NO_CHIEF_AVAILABLE, location));
-				}
-			}
-
-			Set<UUID> usedInRoom = assignment.getInvigilatorAssignments().stream()
-				.map(InvigilatorAssignment::getInvigilator)
-				.filter(Objects::nonNull)
-				.map(Person::getId)
-				.collect(Collectors.toCollection(HashSet::new));
-
-			int missingRequired = 0;
-			for (InvigilatorAssignment seat : assignment.getInvigilatorAssignments()) {
-				if (seat.isRequired()) {
-					run.invigilatorSlotsTotal++;
-				}
-				if (seat.getInvigilator() != null) {
-					continue;
-				}
-				Person invigilator = pick(invigilators, false, assignment, context, workload, usedInRoom);
-				if (invigilator != null) {
-					seat.setInvigilator(invigilator);
-					usedInRoom.add(invigilator.getId());
-					workload.record(invigilator.getId(), assignment);
-					if (seat.isRequired()) {
-						run.invigilatorSlotsFilled++;
-					}
-				} else if (seat.isRequired()) {
-					missingRequired++;
-				}
-			}
-			if (missingRequired > 0) {
-				run.warnings.add(MessageFormat.format(Messages.ASSIGNMENT_INVIGILATORS_UNFILLED, missingRequired, location));
-			}
+		for (List<RoomAssignment> sitting : sittings.values()) {
+			sitting.sort(Comparator.comparing(ra -> ra.getRoom().getName()));
+			fillChiefs(sitting, chiefs, context, workload, run);
+			fillInvigilators(sitting, invigilators, context, workload, run);
 		}
 		return run;
 	}
 
-	/** Lowest-workload eligible candidate, or {@code null}. */
-	private static Person pick(
-		List<Person> candidates,
-		boolean asChief,
-		RoomAssignment current,
-		SchedulingContext context,
-		WorkloadTracker workload,
-		Set<UUID> excludeIds
-	) {
-		Person best = null;
-		long bestLoad = Long.MAX_VALUE;
-		for (Person candidate : candidates) {
-			if (excludeIds.contains(candidate.getId())) {
-				continue;
+	private static void fillChiefs(List<RoomAssignment> sitting, List<Person> chiefs, SchedulingContext context,
+	                               WorkloadTracker workload, StaffingRun run) {
+		List<RoomAssignment> seats = sitting.stream().filter(ra -> ra.getChiefInvigilator() == null).toList();
+		if (seats.isEmpty()) {
+			return;
+		}
+		List<Person> ordered = byWorkload(chiefs, workload);
+		int[] capacity = new int[ordered.size()];
+		for (int p = 0; p < ordered.size(); p++) {
+			Person chief = ordered.get(p);
+			// Rooms already held at this time (outside these empty seats) reduce what is left.
+			int held = StaffConcurrencyRules.countOverlappingChiefRooms(context.universe(), seats.getFirst(), chief.getId());
+			capacity[p] = Math.max(chief.getMaxParallelRooms() - held, 0);
+		}
+		List<List<Integer>> candidates = new ArrayList<>(seats.size());
+		for (RoomAssignment seat : seats) {
+			List<Integer> eligible = new ArrayList<>();
+			for (int p = 0; p < ordered.size(); p++) {
+				if (capacity[p] > 0 && StaffConcurrencyRules.canTakeSeat(ordered.get(p), true, seat, context)) {
+					eligible.add(p);
+				}
 			}
-			if (!StaffConcurrencyRules.canTakeSeat(candidate, asChief, current, context)) {
-				continue;
-			}
-			long load = workload.minutesFor(candidate.getId());
-			if (best == null || load < bestLoad || (load == bestLoad && candidate.getName().compareTo(best.getName()) < 0)) {
-				best = candidate;
-				bestLoad = load;
+			candidates.add(eligible);
+		}
+		// Pass 1: at most one room per chief (spreads the work). Pass 2: use second rooms only for
+		// seats that are still empty. Pass 2 only augments pass 1, so coverage stays maximal.
+		int[] oneEach = new int[capacity.length];
+		for (int p = 0; p < capacity.length; p++) {
+			oneEach[p] = Math.min(capacity[p], 1);
+		}
+		int[] result = SeatMatcher.match(candidates, capacity, SeatMatcher.match(candidates, oneEach));
+		for (int s = 0; s < seats.size(); s++) {
+			RoomAssignment seat = seats.get(s);
+			if (result[s] >= 0) {
+				Person chief = ordered.get(result[s]);
+				seat.setChiefInvigilator(chief);
+				workload.record(chief.getId(), seat);
+				run.chiefSlotsFilled++;
+			} else {
+				run.warnings.add(MessageFormat.format(Messages.ASSIGNMENT_NO_CHIEF_AVAILABLE, describeAssignment(seat)));
 			}
 		}
-		return best;
+	}
+
+	private static void fillInvigilators(List<RoomAssignment> sitting, List<Person> invigilators, SchedulingContext context,
+	                                     WorkloadTracker workload, StaffingRun run) {
+		record Seat(RoomAssignment room, InvigilatorAssignment slot) {
+		}
+		List<Seat> required = new ArrayList<>();
+		List<Seat> optional = new ArrayList<>();
+		for (RoomAssignment room : sitting) {
+			for (InvigilatorAssignment slot : room.getInvigilatorAssignments()) {
+				if (slot.isRequired()) {
+					run.invigilatorSlotsTotal++;
+				}
+				if (slot.getInvigilator() == null) {
+					(slot.isRequired() ? required : optional).add(new Seat(room, slot));
+				}
+			}
+		}
+		List<Seat> seats = new ArrayList<>(required);
+		seats.addAll(optional); // mandatory seats are matched first and never emptied again
+		if (seats.isEmpty()) {
+			return;
+		}
+
+		List<Person> ordered = byWorkload(invigilators, workload);
+		int[] capacity = new int[ordered.size()];
+		java.util.Arrays.fill(capacity, 1);
+		Map<RoomAssignment, List<Integer>> eligibleByRoom = new java.util.IdentityHashMap<>();
+		List<List<Integer>> candidates = new ArrayList<>(seats.size());
+		for (Seat seat : seats) {
+			candidates.add(eligibleByRoom.computeIfAbsent(seat.room(), room -> {
+				Set<UUID> alreadyInRoom = room.getInvigilatorAssignments().stream()
+					.map(InvigilatorAssignment::getInvigilator)
+					.filter(Objects::nonNull)
+					.map(Person::getId)
+					.collect(Collectors.toSet());
+				List<Integer> eligible = new ArrayList<>();
+				for (int p = 0; p < ordered.size(); p++) {
+					Person person = ordered.get(p);
+					if (!alreadyInRoom.contains(person.getId()) && StaffConcurrencyRules.canTakeSeat(person, false, room, context)) {
+						eligible.add(p);
+					}
+				}
+				return eligible;
+			}));
+		}
+		int[] result = SeatMatcher.match(candidates, capacity);
+
+		Map<RoomAssignment, Integer> missingRequired = new java.util.IdentityHashMap<>();
+		for (int s = 0; s < seats.size(); s++) {
+			Seat seat = seats.get(s);
+			if (result[s] >= 0) {
+				Person person = ordered.get(result[s]);
+				seat.slot().setInvigilator(person);
+				workload.record(person.getId(), seat.room());
+				if (seat.slot().isRequired()) {
+					run.invigilatorSlotsFilled++;
+				}
+			} else if (seat.slot().isRequired()) {
+				missingRequired.merge(seat.room(), 1, Integer::sum);
+			}
+		}
+		for (RoomAssignment room : sitting) {
+			Integer missing = missingRequired.get(room);
+			if (missing != null) {
+				run.warnings.add(MessageFormat.format(Messages.ASSIGNMENT_INVIGILATORS_UNFILLED, missing, describeAssignment(room)));
+			}
+		}
+	}
+
+	/** Candidates sorted by minutes worked in this exam period, then by name. */
+	private static List<Person> byWorkload(List<Person> people, WorkloadTracker workload) {
+		return people.stream()
+			.sorted(Comparator.comparingLong((Person p) -> workload.minutesFor(p.getId())).thenComparing(Person::getName))
+			.toList();
+	}
+
+	/** Adds empty seats until the room has {@code required}; marks the first {@code required} as mandatory. */
+	private static void ensureSeats(RoomAssignment assignment, int required) {
+		List<InvigilatorAssignment> seats = assignment.getInvigilatorAssignments();
+		for (int i = seats.size(); i < required; i++) {
+			InvigilatorAssignment seat = new InvigilatorAssignment();
+			seat.setPositionIndex(i);
+			assignment.addInvigilatorAssignment(seat);
+		}
+		for (int i = 0; i < seats.size(); i++) {
+			seats.get(i).setRequired(i < required);
+		}
 	}
 
 	// ── Helpers ─────────────────────────────────────────────────────────────
@@ -348,10 +428,12 @@ public class AutoAssignmentService {
 		TimeSlot slot,
 		ScheduleGroup group,
 		GeneratePreviewRequest request,
-		Map<UUID, Person> peopleById
+		Map<UUID, Person> peopleById,
+		int requiredSeats
 	) {
 		RoomAssignment assignment = newAssignment(room, slot, group, request.examDate());
 		assignment.setLocked(item.locked());
+		assignment.setStudentCount(item.studentCount());
 		assignment.setSubjectName(item.subjectName());
 		assignment.setSubjectCode(item.subjectCode());
 		assignment.setChiefInvigilator(item.chiefInvigilatorId() == null ? null : peopleById.get(item.chiefInvigilatorId()));
@@ -360,7 +442,7 @@ public class AutoAssignmentService {
 			UUID id = item.invigilatorIds().get(i);
 			InvigilatorAssignment seat = new InvigilatorAssignment();
 			seat.setPositionIndex(i);
-			seat.setRequired(i < room.getMinInvigilators());
+			seat.setRequired(i < requiredSeats);
 			seat.setInvigilator(id == null ? null : peopleById.get(id));
 			seats.add(seat);
 		}
@@ -378,7 +460,8 @@ public class AutoAssignmentService {
 			invigilatorIds,
 			assignment.isLocked(),
 			assignment.getSubjectName(),
-			assignment.getSubjectCode()
+			assignment.getSubjectCode(),
+			assignment.getStudentCount()
 		);
 	}
 
