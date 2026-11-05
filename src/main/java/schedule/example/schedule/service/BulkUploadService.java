@@ -27,6 +27,8 @@ import schedule.example.schedule.dto.bulk.BulkUploadErrorDTO;
 import schedule.example.schedule.dto.bulk.BulkUploadResultDTO;
 import schedule.example.schedule.entity.Person;
 import schedule.example.schedule.entity.Room;
+import schedule.example.schedule.entity.enums.Gender;
+import schedule.example.schedule.entity.enums.HallGender;
 import schedule.example.schedule.entity.enums.PersonRole;
 import schedule.example.schedule.entity.enums.RoomType;
 import schedule.example.schedule.entity.enums.WeekDay;
@@ -96,7 +98,9 @@ public class BulkUploadService {
 				values.getString(1),
 				values.getString(2),
 				values.getString(3),
-				values.getString(4)
+				values.getString(4),
+				values.getString(5),
+				values.getString(6)
 			)
 		);
 
@@ -135,7 +139,8 @@ public class BulkUploadService {
 				values.getString(0),
 				values.getString(1),
 				values.getString(2),
-				values.getString(3)
+				values.getString(3),
+				values.getString(4)
 			)
 		);
 
@@ -168,24 +173,31 @@ public class BulkUploadService {
 	public byte[] createPersonsTemplate() {
 		return createWorkbook(
 			"Persons",
-			List.of("Name", "Type", "Email (optional)", "Department (optional)", "Available Days (optional, comma-separated)"),
+			List.of("Name", "Type", "Email (optional)", "Department (optional)", "Available Days (optional, comma-separated)",
+				"Gender (optional)", "Subject Codes Taught (optional, comma-separated)"),
 			List.of(
-				List.of("Ahmed Ali", "CHIEF_INVIGILATOR", "ahmed.ali@example.com", "Mathematics", "Sun, Mon, Tue, Wed, Thu"),
-				List.of("Sara Hassan", "INVIGILATOR", "sara.hassan@example.com", "Physics", "Sun, Tue, Thu")
+				List.of("Ahmed Ali", "CHIEF_INVIGILATOR", "ahmed.ali@example.com", "Mathematics", "Sun, Mon, Tue, Wed, Thu", "MALE", "MATH101, MATH201"),
+				List.of("Sara Hassan", "INVIGILATOR", "sara.hassan@example.com", "Physics", "Sun, Tue, Thu", "FEMALE", "")
 			),
-			sheet -> addDropdownValidation(sheet, 1, 5000, 1, 1, enumNames(PersonRole.values()))
+			sheet -> {
+				addDropdownValidation(sheet, 1, 5000, 1, 1, enumNames(PersonRole.values()));
+				addDropdownValidation(sheet, 1, 5000, 5, 5, enumNames(Gender.values()));
+			}
 		);
 	}
 
 	public byte[] createRoomsTemplate() {
 		return createWorkbook(
 			"Rooms",
-			List.of("Name", "Capacity (optional)", "Type (optional)", "Min Invigilators (optional)"),
+			List.of("Name", "Capacity (optional)", "Type (optional)", "Min Invigilators (optional)", "Hall Gender (optional)"),
 			List.of(
-				List.of("Hall A", "80", "LARGE", "4"),
-				List.of("Lab 2", "30", "MEDIUM", "2")
+				List.of("Hall A", "80", "LARGE", "4", "MIXED"),
+				List.of("Lab 2", "30", "MEDIUM", "2", "FEMALE")
 			),
-			sheet -> addDropdownValidation(sheet, 1, 5000, 2, 2, enumNames(RoomType.values()))
+			sheet -> {
+				addDropdownValidation(sheet, 1, 5000, 2, 2, enumNames(RoomType.values()));
+				addDropdownValidation(sheet, 1, 5000, 4, 4, enumNames(HallGender.values()));
+			}
 		);
 	}
 
@@ -220,11 +232,40 @@ public class BulkUploadService {
 		}
 
 		Set<WeekDay> availableDays = parseWeekDays(source.availableDays(), errors);
+
+		Gender gender = null;
+		String genderText = NameNormalizationUtil.normalizeWhitespace(source.gender());
+		if (genderText != null && !genderText.isBlank()) {
+			Optional<Gender> parsed = parseEnum(source.gender(), Gender::valueOf);
+			if (parsed.isEmpty()) {
+				errors.add("Invalid gender. Expected MALE or FEMALE (or leave empty).");
+			} else {
+				gender = parsed.get();
+			}
+		}
+
+		Set<String> subjectCodes = new LinkedHashSet<>();
+		String codesText = NameNormalizationUtil.normalizeWhitespace(source.subjectCodes());
+		if (codesText != null && !codesText.isBlank()) {
+			for (String token : codesText.split(",")) {
+				String code = token.trim();
+				if (code.isEmpty()) {
+					continue;
+				}
+				if (code.length() > 40) {
+					errors.add("Subject code must be at most 40 characters: " + code + ".");
+				} else {
+					subjectCodes.add(code);
+				}
+			}
+		}
+
 		if (!errors.isEmpty()) {
 			return ValidationService.RowValidationResult.failure(errors);
 		}
 
-		return ValidationService.RowValidationResult.success(new PersonImportCommand(name, role.orElseThrow(), email, department, availableDays));
+		return ValidationService.RowValidationResult.success(
+			new PersonImportCommand(name, role.orElseThrow(), email, department, availableDays, gender, subjectCodes));
 	}
 
 	private ValidationService.RowValidationResult<RoomImportCommand> validateRoomRow(RoomImportSource source) {
@@ -248,12 +289,24 @@ public class BulkUploadService {
 		}
 
 		Integer minInvigilators = parseInteger(source.minInvigilators(), DEFAULT_MIN_INVIGILATORS, "Minimum invigilators", 0, errors);
+
+		HallGender hallGender = HallGender.MIXED;
+		String hallText = NameNormalizationUtil.normalizeWhitespace(source.hallGender());
+		if (hallText != null && !hallText.isBlank()) {
+			Optional<HallGender> parsed = parseEnum(source.hallGender(), HallGender::valueOf);
+			if (parsed.isEmpty()) {
+				errors.add("Invalid hall gender. Expected MIXED, MALE or FEMALE.");
+			} else {
+				hallGender = parsed.get();
+			}
+		}
+
 		if (!errors.isEmpty()) {
 			return ValidationService.RowValidationResult.failure(errors);
 		}
 
 		return ValidationService.RowValidationResult.success(
-			new RoomImportCommand(name, capacity, roomType.orElse(DEFAULT_ROOM_TYPE), minInvigilators)
+			new RoomImportCommand(name, capacity, roomType.orElse(DEFAULT_ROOM_TYPE), minInvigilators, hallGender)
 		);
 	}
 
@@ -410,6 +463,8 @@ public class BulkUploadService {
 		person.setEmail(command.email());
 		person.setRole(command.role());
 		person.setAvailableDays(new LinkedHashSet<>(command.availableDays()));
+		person.setGender(command.gender());
+		person.setSubjectCodes(command.subjectCodes());
 		person.setTotalAssignments(0);
 		person.setActive(true);
 		return person;
@@ -421,6 +476,7 @@ public class BulkUploadService {
 		room.setCapacity(command.capacity());
 		room.setType(command.type());
 		room.setMinInvigilators(command.minInvigilators());
+		room.setHallGender(command.hallGender());
 		room.setActive(true);
 		return room;
 	}
@@ -526,16 +582,18 @@ public class BulkUploadService {
 		void customize(Sheet sheet);
 	}
 
-	private record PersonImportSource(String name, String type, String email, String department, String availableDays) {
+	private record PersonImportSource(String name, String type, String email, String department, String availableDays,
+	                                  String gender, String subjectCodes) {
 	}
 
-	private record PersonImportCommand(String name, PersonRole role, String email, String department, Set<WeekDay> availableDays) {
+	private record PersonImportCommand(String name, PersonRole role, String email, String department, Set<WeekDay> availableDays,
+	                                   Gender gender, Set<String> subjectCodes) {
 	}
 
-	private record RoomImportSource(String name, String capacity, String type, String minInvigilators) {
+	private record RoomImportSource(String name, String capacity, String type, String minInvigilators, String hallGender) {
 	}
 
-	private record RoomImportCommand(String name, int capacity, RoomType type, int minInvigilators) {
+	private record RoomImportCommand(String name, int capacity, RoomType type, int minInvigilators, HallGender hallGender) {
 	}
 
 	private record SavePlan<TEntity>(

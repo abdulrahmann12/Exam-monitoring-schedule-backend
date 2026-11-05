@@ -135,7 +135,7 @@ public class ScheduleBulkUploadService {
 	}
 
 	private void buildDataSheet(XSSFWorkbook workbook, Sheet sheet, List<String> slotLabels, List<String> roomNames) {
-		List<String> headers = List.of("Date (YYYY-MM-DD)", "Time Slot", "Room", "Subject Name", "Subject Code");
+		List<String> headers = List.of("Date (YYYY-MM-DD)", "Time Slot", "Room", "Subject Name", "Subject Code", "Students (optional)");
 		CellStyle headerStyle = createHeaderStyle(workbook);
 
 		Row headerRow = sheet.createRow(0);
@@ -159,6 +159,7 @@ public class ScheduleBulkUploadService {
 		exampleRow.createCell(2).setCellValue(roomNames.get(0));
 		exampleRow.createCell(3).setCellValue("Example Subject");
 		exampleRow.createCell(4).setCellValue("EX101");
+		exampleRow.createCell(5).setCellValue(25);
 
 		int firstDataRow = 1;
 		int lastDataRow = TEMPLATE_VALIDATION_ROWS;
@@ -250,7 +251,8 @@ public class ScheduleBulkUploadService {
 						values.getString(1),
 						values.getString(2),
 						values.getString(3),
-						values.getString(4)
+						values.getString(4),
+						values.getString(5)
 				)
 		);
 
@@ -290,6 +292,7 @@ public class ScheduleBulkUploadService {
 			assignment.setTimeSlot(command.timeSlot());
 			assignment.setSubjectName(command.subjectName());
 			assignment.setSubjectCode(command.subjectCode());
+			assignment.setStudentCount(command.studentCount());
 			assignment.setLocked(false);
 			assignment.setSource(AssignmentSource.GENERATED);
 			toCreate.add(assignment);
@@ -356,7 +359,13 @@ public class ScheduleBulkUploadService {
 			return;
 		}
 
-		validCommands.add(new ScheduleRowCommand(rowNumber, examDate, timeSlot, room, subjectName, subjectCode));
+		Integer studentCount = parseStudentCount(source.studentCount(), room, rowErrors);
+		if (!rowErrors.isEmpty()) {
+			rowErrors.forEach(message -> errors.add(new BulkUploadErrorDTO(rowNumber, message)));
+			return;
+		}
+
+		validCommands.add(new ScheduleRowCommand(rowNumber, examDate, timeSlot, room, subjectName, subjectCode, studentCount));
 	}
 
 	/**
@@ -455,10 +464,33 @@ public class ScheduleBulkUploadService {
 		return normalized;
 	}
 
-	private record ScheduleRowSource(String dateText, String timeSlotText, String roomText, String subjectName, String subjectCode) {
+	/** Optional whole number between 0 and the room's capacity. */
+	private static Integer parseStudentCount(String text, Room room, List<String> errors) {
+		String normalized = NameNormalizationUtil.normalizeWhitespace(text);
+		if (normalized == null || normalized.isBlank()) {
+			return null;
+		}
+		try {
+			int value = (int) Double.parseDouble(normalized);
+			if (value < 0) {
+				errors.add("Students cannot be negative.");
+				return null;
+			}
+			if (value > room.getCapacity()) {
+				errors.add(MessageFormat.format(Messages.ASSIGNMENT_STUDENTS_EXCEED_CAPACITY, room.getName(), room.getCapacity(), value));
+				return null;
+			}
+			return value;
+		} catch (NumberFormatException exception) {
+			errors.add("Students must be a whole number.");
+			return null;
+		}
 	}
 
-	private record ScheduleRowCommand(int rowNumber, LocalDate examDate, TimeSlot timeSlot, Room room, String subjectName, String subjectCode) {
+	private record ScheduleRowSource(String dateText, String timeSlotText, String roomText, String subjectName, String subjectCode, String studentCount) {
+	}
+
+	private record ScheduleRowCommand(int rowNumber, LocalDate examDate, TimeSlot timeSlot, Room room, String subjectName, String subjectCode, Integer studentCount) {
 	}
 
 	private record ScheduleRowKey(LocalDate examDate, UUID timeSlotId, UUID roomId) {
