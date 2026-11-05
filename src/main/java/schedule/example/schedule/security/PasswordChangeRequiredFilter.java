@@ -35,7 +35,8 @@ public class PasswordChangeRequiredFilter extends OncePerRequestFilter {
 	private static final Set<String> ALLOWED = Set.of(
 		"GET /api/auth/me",
 		"POST /api/auth/change-password",
-		"POST /api/auth/logout"
+		"POST /api/auth/logout",
+		"POST /api/auth/logout-all"
 	);
 
 	private final ObjectMapper objectMapper;

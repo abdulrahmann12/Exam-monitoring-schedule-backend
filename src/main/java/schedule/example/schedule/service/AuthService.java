@@ -1,5 +1,6 @@
 package schedule.example.schedule.service;
 
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -15,7 +16,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 import schedule.example.schedule.config.Messages;
-import schedule.example.schedule.dto.auth.AuthResponse;
 import schedule.example.schedule.dto.auth.ChangePasswordRequest;
 import schedule.example.schedule.dto.auth.LoginRequest;
 import schedule.example.schedule.entity.AdminUser;
@@ -24,6 +24,9 @@ import schedule.example.schedule.exception.ValidationException;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.security.JwtTokenProvider;
 import schedule.example.schedule.security.PasswordPolicy;
+
+import java.time.Instant;
+import java.util.UUID;
 
 @Service
 @Validated
@@ -37,8 +40,16 @@ public class AuthService {
 	private final AdminUserRepository adminUserRepository;
 	private final PasswordEncoder passwordEncoder;
 	private final LoginAttemptService loginAttemptService;
+	private final SessionService sessionService;
 
-	public AuthResponse login(@Valid LoginRequest request) {
+	/** Everything the controller needs to set the two cookies. */
+	public record SignedIn(String email, String accessToken, Instant accessExpiresAt, String refreshToken, Instant sessionExpiresAt) {
+	}
+
+	public record AccessToken(String token, Instant expiresAt) {
+	}
+
+	public SignedIn login(@Valid LoginRequest request, HttpServletRequest httpRequest) {
 		// A locked account is refused before the password is even checked.
 		var account = adminUserRepository.findByEmailIgnoreCase(request.email());
 		account.ifPresent(loginAttemptService::rejectIfLocked);
@@ -48,13 +59,13 @@ public class AuthService {
 			);
 			AdminUser admin = requireAdmin(authentication.getName());
 			loginAttemptService.recordSuccess(admin.getId());
-			return issueToken(admin);
+			return openSession(admin, httpRequest);
 		} catch (AuthenticationException ex) {
 			if (ex instanceof DisabledException disabled && account.isPresent()) {
 				rejectDisabled(account.get(), request.password(), disabled);
 			}
 			if (account.isPresent()) {
-				java.time.Instant lockedUntil = loginAttemptService.recordFailure(account.get().getId());
+				Instant lockedUntil = loginAttemptService.recordFailure(account.get().getId());
 				if (lockedUntil != null) {
 					throw loginAttemptService.lockedException(lockedUntil); // tell the user right away
 				}
@@ -77,28 +88,48 @@ public class AuthService {
 		}
 	}
 
+	/** New device session + first access token for a user whose identity is already proven. */
+	public SignedIn openSession(AdminUser user, HttpServletRequest httpRequest) {
+		SessionService.Started started = sessionService.start(user, httpRequest);
+		AccessToken access = accessToken(user, started.session().getId());
+		return new SignedIn(user.getEmail(), access.token(), access.expiresAt(), started.refreshToken(), started.session().getExpiresAt());
+	}
+
+	/** Silent renewal: rotates the refresh token and issues a fresh access token. */
+	public SignedIn refresh(String refreshToken) {
+		SessionService.Refreshed refreshed = sessionService.refresh(refreshToken);
+		AccessToken access = accessToken(refreshed.user(), refreshed.session().getId());
+		return new SignedIn(refreshed.user().getEmail(), access.token(), access.expiresAt(),
+			refreshed.refreshToken(), refreshed.session().getExpiresAt());
+	}
+
+	/** Logout on this device only. Safe to call with a missing or already-ended token. */
+	public void logout(String refreshToken) {
+		sessionService.revokeByRefreshToken(refreshToken);
+	}
+
 	/**
-	 * Server-side logout: bumps the account's token version so every token issued so far — on
-	 * this device and any other — stops working. The shared demo account is exempt (one visitor
-	 * logging out must not kick out all the others).
+	 * Signs the user out on every device: all sessions end and every access token already issued
+	 * stops working (token version bump). The shared demo account is exempt.
 	 */
 	@Transactional
-	public void logout(String email) {
+	public void logoutEverywhere(String email) {
 		AdminUser admin = requireAdmin(email);
 		if (admin.getRole() == AdminRole.DEMO_ADMIN) {
 			return;
 		}
 		admin.setTokenVersion(admin.getTokenVersion() + 1);
 		adminUserRepository.save(admin);
-		LOGGER.info("[AUTH] Logout — all sessions revoked for '{}'.", admin.getEmail());
+		sessionService.revokeAllForUser(admin.getId());
+		LOGGER.info("[AUTH] Signed out everywhere: '{}'.", admin.getEmail());
 	}
 
 	/**
-	 * Changes the password, revokes all existing sessions, and returns a fresh token so the
-	 * caller stays signed in on the current device.
+	 * Changes the password. Every other device is signed out; this one stays signed in and gets a
+	 * new access token (the refresh cookie stays the same).
 	 */
 	@Transactional
-	public AuthResponse changePassword(String email, @Valid ChangePasswordRequest request) {
+	public AccessToken changePassword(String email, UUID currentSessionId, @Valid ChangePasswordRequest request) {
 		AdminUser admin = requireAdmin(email);
 		if (!passwordEncoder.matches(request.currentPassword(), admin.getPasswordHash())) {
 			throw new ValidationException(Messages.AUTH_CURRENT_PASSWORD_WRONG);
@@ -111,13 +142,14 @@ public class AuthService {
 		admin.setMustChangePassword(false);
 		admin.setTokenVersion(admin.getTokenVersion() + 1);
 		adminUserRepository.save(admin);
+		sessionService.keepOnly(admin.getId(), currentSessionId, admin.getTokenVersion());
 		LOGGER.info("[AUTH] Password changed — all other sessions revoked for '{}'.", admin.getEmail());
-		return issueToken(admin);
+		return accessToken(admin, currentSessionId);
 	}
 
-	private AuthResponse issueToken(AdminUser admin) {
-		JwtTokenProvider.TokenDetails token = jwtTokenProvider.generateToken(admin.getEmail(), admin.getTokenVersion());
-		return new AuthResponse(token.token(), "Bearer", token.expiresAt(), admin.getEmail());
+	private AccessToken accessToken(AdminUser user, UUID sessionId) {
+		JwtTokenProvider.TokenDetails token = jwtTokenProvider.generateToken(user.getEmail(), user.getTokenVersion(), sessionId);
+		return new AccessToken(token.token(), token.expiresAt());
 	}
 
 	private AdminUser requireAdmin(String email) {

@@ -96,6 +96,9 @@ public final class Messages {
 	public static final String AUTH_PASSWORD_TOO_LONG = "Password is too long (maximum {0} bytes; non-Latin letters count as 2 or 3).";
 	public static final String AUTH_ACCOUNT_DISABLED = "This account is disabled. Ask your administrator to enable it.";
 	public static final String AUTH_PASSWORD_CHANGE_REQUIRED = "You must change your password before continuing.";
+	public static final String AUTH_SESSION_ENDED = "Your session has ended. Please sign in again.";
+	public static final String AUTH_SESSION_RENEWED_ELSEWHERE = "Your session was just renewed in another tab. Please retry.";
+	public static final String AUTH_CSRF_REJECTED = "Request blocked: it did not come from the application.";
 	public static final String AUTH_ACCESS_DENIED = "You do not have permission to do this.";
 
 	// ==================== User Management Messages ====================

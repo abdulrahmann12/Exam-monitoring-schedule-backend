@@ -4,7 +4,6 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -23,6 +22,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import schedule.example.schedule.security.AdminUserDetailsService;
+import schedule.example.schedule.security.CsrfProtectionFilter;
 import schedule.example.schedule.security.DemoLoginRateLimiterFilter;
 import schedule.example.schedule.security.DemoReadOnlyFilter;
 import schedule.example.schedule.security.JwtAuthenticationFilter;
@@ -85,11 +85,12 @@ public class SecurityConfig {
 			// Who may do what. Rules are checked top to bottom; the first match wins.
 			// Default for anything not listed: ADMIN or SCHEDULER (viewers are read-only).
 			.authorizeHttpRequests(authorize -> authorize
-				// Public: the two login endpoints only.
-				.requestMatchers("/api/auth/login", "/api/auth/demo-login").permitAll()
+				// Public: sign in, renew the session from the refresh cookie, and log out
+				// (logout must work even when the access token has already expired).
+				.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/demo-login", "/api/auth/refresh", "/api/auth/logout").permitAll()
 				// Own session: every signed-in user.
 				.requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
-				.requestMatchers(HttpMethod.POST, "/api/auth/logout", "/api/auth/change-password").authenticated()
+				.requestMatchers(HttpMethod.POST, "/api/auth/logout-all", "/api/auth/change-password").authenticated()
 				// User management: administrators only (also for reading — it lists emails).
 				.requestMatchers("/api/users", "/api/users/**").hasRole(ADMIN)
 				// System settings: everyone reads (branding), only administrators change.
@@ -102,6 +103,8 @@ public class SecurityConfig {
 				// answers with its clear "disabled in demo mode" message; it blocks all demo writes.
 				.anyRequest().hasAnyRole(ADMIN, SCHEDULER, DEMO))
 			.authenticationProvider(authenticationProvider)
+			// Anti-forgery check first: requests forged by another website never reach anything else.
+			.addFilterBefore(new CsrfProtectionFilter(corsConfigurationSource(), objectMapper), UsernamePasswordAuthenticationFilter.class)
 			// Rate limiter runs before JWT filter to reject brute-force before token parsing
 			.addFilterBefore(loginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
 			.addFilterBefore(demoLoginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
@@ -153,7 +156,6 @@ public class SecurityConfig {
 		configuration.setAllowedOriginPatterns(origins);
 		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
 		configuration.setAllowedHeaders(List.of("*"));
-		configuration.setExposedHeaders(List.of(HttpHeaders.AUTHORIZATION));
 		configuration.setAllowCredentials(true);
 
 		UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

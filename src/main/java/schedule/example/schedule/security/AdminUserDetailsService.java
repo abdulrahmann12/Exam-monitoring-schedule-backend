@@ -7,6 +7,9 @@ import org.springframework.stereotype.Service;
 
 import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.repository.AdminUserRepository;
+import schedule.example.schedule.service.SessionService;
+
+import java.util.UUID;
 
 /**
  * Loads user accounts for authentication.
@@ -19,9 +22,11 @@ import schedule.example.schedule.repository.AdminUserRepository;
 public class AdminUserDetailsService implements UserDetailsService {
 
 	private final AdminUserRepository adminUserRepository;
+	private final SessionService sessionService;
 
-	public AdminUserDetailsService(AdminUserRepository adminUserRepository) {
+	public AdminUserDetailsService(AdminUserRepository adminUserRepository, SessionService sessionService) {
 		this.adminUserRepository = adminUserRepository;
+		this.sessionService = sessionService;
 	}
 
 	/**
@@ -46,9 +51,10 @@ public class AdminUserDetailsService implements UserDetailsService {
 
 	/**
 	 * Loads the user for an incoming JWT. Rejects the token when the account was deleted or
-	 * disabled, or when its version no longer matches (logged out / password changed since).
+	 * disabled, when its version no longer matches (signed out everywhere / password changed),
+	 * or when its session (device) was logged out.
 	 */
-	public AppUserPrincipal loadForToken(String email, Integer tokenVersion) {
+	public AppUserPrincipal loadForToken(String email, Integer tokenVersion, UUID sessionId) {
 		AdminUser user = adminUserRepository.findByEmailIgnoreCase(email)
 			.orElseThrow(() -> new UsernameNotFoundException("No account found for email: " + email));
 		if (tokenVersion == null || tokenVersion != user.getTokenVersion()) {
@@ -57,6 +63,12 @@ public class AdminUserDetailsService implements UserDetailsService {
 		if (!user.isEnabled()) {
 			throw new UsernameNotFoundException("Account is disabled");
 		}
-		return toPrincipal(user);
+		if (!sessionService.isActive(sessionId, user.getId())) {
+			throw new UsernameNotFoundException("Session has ended");
+		}
+		if (user.getPasswordHash() == null || user.getPasswordHash().isBlank()) {
+			throw new UsernameNotFoundException("Account has no password set.");
+		}
+		return new AppUserPrincipal(user, sessionId);
 	}
 }

@@ -19,8 +19,14 @@ public class AppUserPrincipal extends User {
 	private final String displayName;
 	private final AdminRole role;
 	private final boolean mustChangePassword;
+	/** Session (device) of the current request; null during the password login itself. */
+	private final UUID sessionId;
 
 	public AppUserPrincipal(AdminUser user) {
+		this(user, null);
+	}
+
+	public AppUserPrincipal(AdminUser user, UUID sessionId) {
 		super(
 			user.getEmail(),
 			user.getPasswordHash(),
@@ -34,6 +40,11 @@ public class AppUserPrincipal extends User {
 		this.displayName = user.getDisplayName();
 		this.role = roleOf(user);
 		this.mustChangePassword = user.isMustChangePassword();
+		this.sessionId = sessionId;
+	}
+
+	public UUID getSessionId() {
+		return sessionId;
 	}
 
 	private static AdminRole roleOf(AdminUser user) {

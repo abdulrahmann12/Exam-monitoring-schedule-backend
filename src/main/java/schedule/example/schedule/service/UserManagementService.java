@@ -50,6 +50,7 @@ public class UserManagementService {
 	private final AdminUserRepository adminUserRepository;
 	private final PasswordEncoder passwordEncoder;
 	private final LoginAttemptService loginAttemptService;
+	private final SessionService sessionService;
 
 	@Transactional(readOnly = true)
 	public List<UserResponse> list() {
@@ -104,6 +105,9 @@ public class UserManagementService {
 			user.setTokenVersion(user.getTokenVersion() + 1);
 		}
 		AdminUser saved = adminUserRepository.save(user);
+		if (disabling) {
+			sessionService.revokeAllForUser(user.getId());
+		}
 		LOGGER.warn("[USERS] '{}' updated user '{}': role={}, enabled={}.",
 			actorEmail(actorId), user.getEmail(), user.getRole(), user.isEnabled());
 		return toResponse(saved);
@@ -130,6 +134,7 @@ public class UserManagementService {
 		user.setFailedLoginAttempts(0);
 		user.setLockedUntil(null);
 		AdminUser saved = adminUserRepository.save(user);
+		sessionService.revokeAllForUser(user.getId());
 		LOGGER.warn("[USERS] '{}' reset the password of '{}'.", actorEmail(actorId), user.getEmail());
 		return toResponse(saved);
 	}
@@ -144,6 +149,7 @@ public class UserManagementService {
 		if (isActiveAdmin(user) && activeAdmins.size() <= 1) {
 			throw new BusinessRuleViolationException(Messages.USER_LAST_ADMIN);
 		}
+		sessionService.deleteAllForUser(user.getId());
 		adminUserRepository.delete(user);
 		LOGGER.warn("[USERS] '{}' deleted user '{}'.", actorEmail(actorId), user.getEmail());
 	}

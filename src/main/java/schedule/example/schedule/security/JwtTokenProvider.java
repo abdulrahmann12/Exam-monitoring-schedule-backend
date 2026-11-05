@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Date;
+import java.util.UUID;
 
 /**
  * JWT token provider. Signs and validates HMAC-SHA256 tokens.
@@ -42,13 +43,17 @@ public class JwtTokenProvider {
 	/** Claim holding the user's {@code tokenVersion} at issue time. */
 	public static final String TOKEN_VERSION_CLAIM = "tv";
 
-	public TokenDetails generateToken(String subject, int tokenVersion) {
+	/** Claim holding the server-side session (device) the token belongs to. */
+	public static final String SESSION_CLAIM = "sid";
+
+	public TokenDetails generateToken(String subject, int tokenVersion, UUID sessionId) {
 		Instant issuedAt = Instant.now();
 		Instant expiresAt = issuedAt.plus(jwtProperties.expirationMinutes(), ChronoUnit.MINUTES);
 
 		String token = Jwts.builder()
 			.subject(subject)
 			.claim(TOKEN_VERSION_CLAIM, tokenVersion)
+			.claim(SESSION_CLAIM, sessionId.toString())
 			.issuedAt(Date.from(issuedAt))
 			.expiration(Date.from(expiresAt))
 			.signWith(signingKey)
