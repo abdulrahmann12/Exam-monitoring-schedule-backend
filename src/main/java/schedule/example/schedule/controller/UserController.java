@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import schedule.example.schedule.dto.user.CreateUserRequest;
+import schedule.example.schedule.dto.user.InviteResponse;
 import schedule.example.schedule.dto.user.ResetPasswordRequest;
 import schedule.example.schedule.dto.user.UpdateUserRequest;
 import schedule.example.schedule.dto.user.UserResponse;
@@ -41,8 +42,14 @@ public class UserController {
 
 	@PostMapping
 	@ResponseStatus(HttpStatus.CREATED)
-	public UserResponse create(@Valid @RequestBody CreateUserRequest request, @AuthenticationPrincipal AppUserPrincipal actor) {
+	public InviteResponse create(@Valid @RequestBody CreateUserRequest request, @AuthenticationPrincipal AppUserPrincipal actor) {
 		return userManagementService.create(request, actor.getId());
+	}
+
+	/** Sends a new invitation link to a user who has not signed in yet. */
+	@PostMapping("/{id}/invite")
+	public InviteResponse invite(@PathVariable UUID id, @AuthenticationPrincipal AppUserPrincipal actor) {
+		return userManagementService.invite(id, actor.getId());
 	}
 
 	@PutMapping("/{id}")

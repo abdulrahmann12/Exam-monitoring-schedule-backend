@@ -55,7 +55,10 @@ The full annotated list is in [`.env.example`](.env.example).
 | `AUTH_MAX_SESSIONS_PER_USER`     | — | Active devices per account, default 20 (oldest is signed out) |
 | `LOGIN_MAX_FAILED_ATTEMPTS` / `LOGIN_LOCK_DURATION_MINUTES` | — | Account lockout: default 5 wrong passwords → locked 2880 min (2 days). Unlock early with `BOOTSTRAP_ADMIN_RESET_PASSWORD` |
 | `DEMO_MODE_ENABLED`              | — | `true` only on a public demo deployment; demo sessions are read-only |
-| `BREVO_API_KEY` / `BREVO_SENDER_EMAIL` | — | Enables "notify staff" emails |
+| `BREVO_API_KEY` / `BREVO_SENDER_EMAIL` | — | Enables emails: staff notifications, user invitations, "forgot password" |
+| `APP_FRONTEND_URL`               | ✅ prod | Frontend address used in invitation / reset links (never taken from request headers) |
+| `APP_INVITE_HOURS` / `APP_RESET_LINK_MINUTES` | — | Link lifetimes, default 72 h / 30 min |
+| `APP_LOG_ACCOUNT_LINKS`          | — | Local development only: print links in the log when email is off |
 
 The server refuses to start when a required value is missing and prints which one.
 

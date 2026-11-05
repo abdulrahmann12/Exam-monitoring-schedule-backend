@@ -16,16 +16,11 @@ import schedule.example.schedule.exception.InvalidTokenException;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.repository.UserSessionRepository;
 import schedule.example.schedule.security.AuthCookieProperties;
+import schedule.example.schedule.security.SecureTokens;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Base64;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
@@ -46,7 +41,6 @@ public class SessionService {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(SessionService.class);
 	static final Duration ROTATION_GRACE = Duration.ofSeconds(30);
-	private static final SecureRandom RANDOM = new SecureRandom();
 
 	private final UserSessionRepository sessions;
 	private final AdminUserRepository users;
@@ -213,18 +207,11 @@ public class SessionService {
 	}
 
 	private static String newToken() {
-		byte[] bytes = new byte[32];
-		RANDOM.nextBytes(bytes);
-		return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+		return SecureTokens.newToken();
 	}
 
 	static String hash(String token) {
-		try {
-			byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
-			return HexFormat.of().formatHex(digest);
-		} catch (NoSuchAlgorithmException e) {
-			throw new IllegalStateException("SHA-256 not available", e);
-		}
+		return SecureTokens.sha256(token);
 	}
 
 	private static String truncate(String value, int max) {

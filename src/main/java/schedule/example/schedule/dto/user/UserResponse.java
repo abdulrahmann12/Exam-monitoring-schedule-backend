@@ -15,6 +15,7 @@ public record UserResponse(
 	boolean locked,
 	Instant lockedUntil,
 	boolean mustChangePassword,
+	boolean invitePending,
 	Instant lastLoginAt,
 	Instant createdAt
 ) {

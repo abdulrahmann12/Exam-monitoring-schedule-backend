@@ -8,8 +8,8 @@ import jakarta.validation.constraints.Size;
 import schedule.example.schedule.entity.enums.AdminRole;
 
 /**
- * New user with a temporary password chosen by the administrator. The user must replace it at
- * first sign-in (email invitations come in a later step).
+ * New user. Either {@code sendInvite=true} (the user gets an email link and chooses their own
+ * password) or a {@code temporaryPassword} the user must replace at first sign-in.
  */
 public record CreateUserRequest(
 	@NotBlank(message = "Email is required")
@@ -23,7 +23,12 @@ public record CreateUserRequest(
 	@NotNull(message = "Role is required")
 	AdminRole role,
 
-	@NotBlank(message = "Temporary password is required")
-	String temporaryPassword
+	String temporaryPassword,
+
+	Boolean sendInvite
 ) {
+
+	public boolean invite() {
+		return Boolean.TRUE.equals(sendInvite);
+	}
 }

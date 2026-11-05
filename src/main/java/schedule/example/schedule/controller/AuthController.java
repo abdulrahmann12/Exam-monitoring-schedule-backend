@@ -18,6 +18,11 @@ import org.springframework.web.bind.annotation.RestController;
 import schedule.example.schedule.config.DemoProperties;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.auth.ChangePasswordRequest;
+import schedule.example.schedule.dto.auth.ForgotPasswordRequest;
+import schedule.example.schedule.dto.auth.LinkInfoResponse;
+import schedule.example.schedule.dto.auth.LinkTokenRequest;
+import schedule.example.schedule.dto.auth.SetPasswordFromLinkRequest;
+import schedule.example.schedule.dto.common.MessageResponse;
 import schedule.example.schedule.dto.auth.LoginRequest;
 import schedule.example.schedule.dto.auth.MeResponse;
 import schedule.example.schedule.dto.auth.SessionResponse;
@@ -25,7 +30,9 @@ import schedule.example.schedule.dto.common.ApiErrorResponse;
 import schedule.example.schedule.exception.InvalidTokenException;
 import schedule.example.schedule.security.AppUserPrincipal;
 import schedule.example.schedule.security.AuthCookies;
+import schedule.example.schedule.service.AccountTokenService;
 import schedule.example.schedule.service.AuthService;
+import schedule.example.schedule.service.PasswordRecoveryService;
 import schedule.example.schedule.service.DemoAuthService;
 
 import java.time.Instant;
@@ -44,12 +51,23 @@ public class AuthController {
 	private final DemoAuthService demoAuthService;
 	private final DemoProperties demoProperties;
 	private final AuthCookies authCookies;
+	private final PasswordRecoveryService passwordRecoveryService;
+	private final AccountTokenService accountTokenService;
 
-	public AuthController(AuthService authService, DemoAuthService demoAuthService, DemoProperties demoProperties, AuthCookies authCookies) {
+	public AuthController(
+		AuthService authService,
+		DemoAuthService demoAuthService,
+		DemoProperties demoProperties,
+		AuthCookies authCookies,
+		PasswordRecoveryService passwordRecoveryService,
+		AccountTokenService accountTokenService
+	) {
 		this.authService = authService;
 		this.demoAuthService = demoAuthService;
 		this.demoProperties = demoProperties;
 		this.authCookies = authCookies;
+		this.passwordRecoveryService = passwordRecoveryService;
+		this.accountTokenService = accountTokenService;
 	}
 
 	@PostMapping("/login")
@@ -127,6 +145,32 @@ public class AuthController {
 		AuthService.AccessToken access = authService.changePassword(user.getUsername(), user.getSessionId(), request);
 		authCookies.writeAccess(response, access.token(), access.expiresAt());
 		return new SessionResponse(user.getUsername(), access.expiresAt(), null);
+	}
+
+	/**
+	 * "Forgot password". Always the same 202 answer, whether or not the account exists,
+	 * so the endpoint cannot be used to find out which emails have accounts.
+	 */
+	@PostMapping("/forgot-password")
+	@ResponseStatus(HttpStatus.ACCEPTED)
+	public MessageResponse forgotPassword(@Valid @RequestBody ForgotPasswordRequest request, HttpServletRequest httpRequest) {
+		passwordRecoveryService.requestReset(request.email(), httpRequest.getRemoteAddr());
+		return new MessageResponse(Messages.AUTH_RESET_REQUESTED);
+	}
+
+	/** Tells the password page what the link is for (invitation or reset) and for which account. */
+	@PostMapping("/reset-password/check")
+	public LinkInfoResponse checkLink(@Valid @RequestBody LinkTokenRequest request) {
+		AccountTokenService.LinkInfo info = accountTokenService.check(request.token());
+		return new LinkInfoResponse(info.purpose(), info.email(), info.expiresAt());
+	}
+
+	/** Sets the password from an invitation or reset link. All existing sessions are signed out. */
+	@PostMapping("/reset-password")
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void resetPassword(@Valid @RequestBody SetPasswordFromLinkRequest request, HttpServletResponse response) {
+		accountTokenService.setPassword(request.token(), request.newPassword());
+		authCookies.clear(response); // a different account may have been signed in on this browser
 	}
 
 	private SessionResponse writeSession(AuthService.SignedIn signedIn, HttpServletResponse response) {

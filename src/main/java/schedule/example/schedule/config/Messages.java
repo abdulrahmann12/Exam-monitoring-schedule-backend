@@ -99,6 +99,9 @@ public final class Messages {
 	public static final String AUTH_SESSION_ENDED = "Your session has ended. Please sign in again.";
 	public static final String AUTH_SESSION_RENEWED_ELSEWHERE = "Your session was just renewed in another tab. Please retry.";
 	public static final String AUTH_CSRF_REJECTED = "Request blocked: it did not come from the application.";
+	public static final String AUTH_LINK_INVALID = "This link is invalid, already used or expired. Ask for a new one.";
+	public static final String AUTH_RESET_REQUESTED = "If an account exists for this email, we have sent a link to reset the password. Check your inbox (and spam folder).";
+	public static final String AUTH_TOO_MANY_RESET_REQUESTS = "Too many requests. Please wait a few minutes and try again.";
 	public static final String AUTH_ACCESS_DENIED = "You do not have permission to do this.";
 
 	// ==================== User Management Messages ====================
@@ -108,7 +111,9 @@ public final class Messages {
 	public static final String USER_DEMO_ACCOUNT_PROTECTED = "The demo account is managed by the system and cannot be changed here.";
 	public static final String USER_CANNOT_CHANGE_SELF = "You cannot change your own role, disable or delete your own account. Ask another administrator.";
 	public static final String USER_RESET_OWN_PASSWORD = "To change your own password use Settings > Change password.";
-	public static final String USER_LAST_ADMIN ="There must always be at least one active administrator.";
+	public static final String USER_TEMP_PASSWORD_REQUIRED = "Enter a temporary password, or choose to send an invitation email.";
+	public static final String USER_INVITE_NOT_ALLOWED = "This user has already signed in. Use Reset password instead.";
+	public static final String USER_LAST_ADMIN = "There must always be at least one active administrator.";
 
 
 	// ==================== Demo Mode Messages ====================

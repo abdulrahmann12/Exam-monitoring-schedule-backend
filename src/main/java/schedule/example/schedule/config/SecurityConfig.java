@@ -88,6 +88,8 @@ public class SecurityConfig {
 				// Public: sign in, renew the session from the refresh cookie, and log out
 				// (logout must work even when the access token has already expired).
 				.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/demo-login", "/api/auth/refresh", "/api/auth/logout").permitAll()
+				// Public: "forgot password" and setting a password from an emailed link.
+				.requestMatchers(HttpMethod.POST, "/api/auth/forgot-password", "/api/auth/reset-password", "/api/auth/reset-password/check").permitAll()
 				// Own session: every signed-in user.
 				.requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
 				.requestMatchers(HttpMethod.POST, "/api/auth/logout-all", "/api/auth/change-password").authenticated()

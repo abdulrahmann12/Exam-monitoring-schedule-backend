@@ -7,14 +7,18 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.validation.annotation.Validated;
 
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.user.CreateUserRequest;
+import schedule.example.schedule.dto.user.InviteResponse;
 import schedule.example.schedule.dto.user.ResetPasswordRequest;
 import schedule.example.schedule.dto.user.UpdateUserRequest;
 import schedule.example.schedule.dto.user.UserResponse;
 import schedule.example.schedule.entity.AdminUser;
+import schedule.example.schedule.entity.enums.AccountTokenPurpose;
 import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.exception.BusinessRuleViolationException;
 import schedule.example.schedule.exception.DuplicateResourceException;
@@ -22,6 +26,7 @@ import schedule.example.schedule.exception.NotFoundException;
 import schedule.example.schedule.exception.ValidationException;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.security.PasswordPolicy;
+import schedule.example.schedule.security.SecureTokens;
 
 import java.util.List;
 import java.util.Locale;
@@ -51,6 +56,8 @@ public class UserManagementService {
 	private final PasswordEncoder passwordEncoder;
 	private final LoginAttemptService loginAttemptService;
 	private final SessionService sessionService;
+	private final AccountTokenService accountTokenService;
+	private final AccountEmailService accountEmailService;
 
 	@Transactional(readOnly = true)
 	public List<UserResponse> list() {
@@ -59,10 +66,19 @@ public class UserManagementService {
 			.toList();
 	}
 
+	/**
+	 * Creates a user, either with an invitation link (the user chooses their own password) or with a
+	 * temporary password the user must replace at first sign-in.
+	 */
 	@Transactional
-	public UserResponse create(@Valid CreateUserRequest request, UUID actorId) {
+	public InviteResponse create(@Valid CreateUserRequest request, UUID actorId) {
 		requireAssignable(request.role());
-		PasswordPolicy.validate(request.temporaryPassword());
+		if (!request.invite()) {
+			if (request.temporaryPassword() == null || request.temporaryPassword().isBlank()) {
+				throw new ValidationException(Messages.USER_TEMP_PASSWORD_REQUIRED);
+			}
+			PasswordPolicy.validate(request.temporaryPassword());
+		}
 		String email = request.email().trim().toLowerCase(Locale.ROOT);
 		if (adminUserRepository.findByEmailIgnoreCase(email).isPresent()) {
 			throw new DuplicateResourceException(Messages.USER_EMAIL_EXISTS);
@@ -72,11 +88,62 @@ public class UserManagementService {
 		user.setDisplayName(cleanName(request.displayName()));
 		user.setRole(request.role());
 		user.setEnabled(true);
-		user.setMustChangePassword(true);
-		user.setPasswordHash(passwordEncoder.encode(request.temporaryPassword()));
+		if (request.invite()) {
+			setUnusablePassword(user);
+		} else {
+			user.setMustChangePassword(true);
+			user.setPasswordHash(passwordEncoder.encode(request.temporaryPassword()));
+		}
 		AdminUser saved = adminUserRepository.saveAndFlush(user);
-		LOGGER.warn("[USERS] '{}' created user '{}' with role {}.", actorEmail(actorId), email, request.role());
-		return toResponse(saved);
+		LOGGER.warn("[USERS] '{}' created user '{}' with role {} ({}).", actorEmail(actorId), email, request.role(),
+			request.invite() ? "invitation" : "temporary password");
+		return request.invite() ? sendInvitation(saved, actorId) : new InviteResponse(toResponse(saved), null, null, false);
+	}
+
+	/** New invitation link for a user who has not signed in yet (e.g. the first email got lost or expired). */
+	@Transactional
+	public InviteResponse invite(UUID id, UUID actorId) {
+		AdminUser user = requireManageable(id);
+		if (user.getId().equals(actorId) || user.getLastLoginAt() != null) {
+			throw new BusinessRuleViolationException(Messages.USER_INVITE_NOT_ALLOWED);
+		}
+		// Any temporary password stops working: the link is now the only way in.
+		setUnusablePassword(user);
+		user.setTokenVersion(user.getTokenVersion() + 1);
+		adminUserRepository.save(user);
+		sessionService.revokeAllForUser(user.getId());
+		LOGGER.warn("[USERS] '{}' sent a new invitation to '{}'.", actorEmail(actorId), user.getEmail());
+		return sendInvitation(user, actorId);
+	}
+
+	private InviteResponse sendInvitation(AdminUser user, UUID actorId) {
+		AccountTokenService.Issued link = accountTokenService.issue(user, AccountTokenPurpose.INVITE);
+		String invitedBy = adminUserRepository.findById(actorId)
+			.map(actor -> actor.getDisplayName() != null ? actor.getDisplayName() : actor.getEmail())
+			.orElse("An administrator");
+		boolean emailSent = accountEmailService.canSend();
+		// Only email the link once it is safely stored (after commit).
+		afterCommit(() -> accountEmailService.sendInvite(user, link, invitedBy));
+		return new InviteResponse(toResponse(user), link.link(), link.expiresAt(), emailSent);
+	}
+
+	/** Random password nobody knows: the account can only be entered through the emailed link. */
+	private void setUnusablePassword(AdminUser user) {
+		user.setPasswordHash(passwordEncoder.encode(SecureTokens.newToken()));
+		user.setMustChangePassword(false);
+	}
+
+	private static void afterCommit(Runnable action) {
+		if (TransactionSynchronizationManager.isSynchronizationActive()) {
+			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+				@Override
+				public void afterCommit() {
+					action.run();
+				}
+			});
+		} else {
+			action.run();
+		}
 	}
 
 	@Transactional
@@ -150,6 +217,7 @@ public class UserManagementService {
 			throw new BusinessRuleViolationException(Messages.USER_LAST_ADMIN);
 		}
 		sessionService.deleteAllForUser(user.getId());
+		accountTokenService.deleteAllForUser(user.getId());
 		adminUserRepository.delete(user);
 		LOGGER.warn("[USERS] '{}' deleted user '{}'.", actorEmail(actorId), user.getEmail());
 	}
@@ -192,6 +260,7 @@ public class UserManagementService {
 			locked,
 			locked ? user.getLockedUntil() : null,
 			user.isMustChangePassword(),
+			accountTokenService.hasPendingInvite(user.getId()),
 			user.getLastLoginAt(),
 			user.getCreatedAt()
 		);
