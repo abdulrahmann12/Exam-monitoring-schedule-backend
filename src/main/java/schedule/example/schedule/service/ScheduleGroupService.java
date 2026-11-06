@@ -28,6 +28,7 @@ import schedule.example.schedule.repository.PersonRepository;
 import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.ScheduleGroupRepository;
 import schedule.example.schedule.repository.SettingsRepository;
+import schedule.example.schedule.tenant.TenantContext;
 import schedule.example.schedule.repository.TimeSlotRepository;
 
 import java.text.MessageFormat;
@@ -163,7 +164,7 @@ public class ScheduleGroupService {
 			return;
 		}
 
-		settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID).ifPresent(settings -> {
+		settingsRepository.findById(TenantContext.require()).ifPresent(settings -> {
 			settings.setExamPeriod(group.getName());
 			settingsRepository.save(settings);
 		});

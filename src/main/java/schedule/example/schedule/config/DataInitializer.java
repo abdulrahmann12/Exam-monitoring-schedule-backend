@@ -7,7 +7,8 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import schedule.example.schedule.audit.AuditCategory;
 import schedule.example.schedule.audit.AuditEntry;
@@ -21,6 +22,8 @@ import schedule.example.schedule.repository.SettingsRepository;
 import schedule.example.schedule.security.AdminUserDetailsService;
 import schedule.example.schedule.security.PasswordPolicy;
 import schedule.example.schedule.service.ScheduleGroupSupport;
+import schedule.example.schedule.tenant.TenantContext;
+import schedule.example.schedule.tenant.UniversityProvisioning;
 
 import java.security.SecureRandom;
 import java.util.Base64;
@@ -39,6 +42,8 @@ public class DataInitializer implements ApplicationRunner {
 	private final AdminUserDetailsService adminUserDetailsService;
 	private final ScheduleGroupSupport scheduleGroupSupport;
 	private final AuditService auditService;
+	private final UniversityProvisioning universityProvisioning;
+	private final TransactionTemplate transaction;
 
 	public DataInitializer(
 		AdminUserRepository adminUserRepository,
@@ -48,7 +53,9 @@ public class DataInitializer implements ApplicationRunner {
 		PasswordEncoder passwordEncoder,
 		AdminUserDetailsService adminUserDetailsService,
 		ScheduleGroupSupport scheduleGroupSupport,
-		AuditService auditService
+		AuditService auditService,
+		UniversityProvisioning universityProvisioning,
+		PlatformTransactionManager transactionManager
 	) {
 		this.adminUserRepository = adminUserRepository;
 		this.settingsRepository = settingsRepository;
@@ -58,35 +65,40 @@ public class DataInitializer implements ApplicationRunner {
 		this.adminUserDetailsService = adminUserDetailsService;
 		this.scheduleGroupSupport = scheduleGroupSupport;
 		this.auditService = auditService;
+		this.universityProvisioning = universityProvisioning;
+		this.transaction = new TransactionTemplate(transactionManager);
 	}
 
 	private static final int MIN_BOOTSTRAP_PASSWORD_LENGTH = 10;
 
+	/**
+	 * Not one big transaction on purpose: university data must be written inside
+	 * {@code TenantContext.runAs}, which has to wrap its own transaction (see {@link UniversityProvisioning}).
+	 */
 	@Override
-	@Transactional
 	public void run(ApplicationArguments args) {
-		bootstrapAdministrator();
+		// The first university always exists (on upgrades the V9 migration already created it).
+		String defaultName = settingsRepository.findById(TenantContext.DEFAULT_UNIVERSITY_ID)
+			.map(Settings::getUniversityName)
+			.filter(name -> name != null && !name.isBlank())
+			.orElse("University");
+		universityProvisioning.ensureUniversity(TenantContext.DEFAULT_UNIVERSITY_ID, defaultName, "default");
 
-		// ── Demo account ──────────────────────────────────────────────────────
-		if (demoProperties.enabled()) {
-			seedDemoAccount();
-		} else {
-			LOGGER.warn("[DEMO] Demo mode is disabled (app.demo.enabled=false). Demo account will not be seeded.");
-		}
+		transaction.executeWithoutResult(status -> {
+			// Accounts from before universities existed belong to the first university.
+			int adopted = adminUserRepository.assignUniversityWhereMissing(TenantContext.DEFAULT_UNIVERSITY_ID);
+			if (adopted > 0) {
+				LOGGER.warn("[UNIVERSITY] {} account(s) without a university were assigned to the first university.", adopted);
+			}
+			bootstrapAdministrator();
+			if (demoProperties.enabled()) {
+				seedDemoAccount();
+			} else {
+				LOGGER.warn("[DEMO] Demo mode is disabled (app.demo.enabled=false). Demo account will not be seeded.");
+			}
+		});
 
-		if (!settingsRepository.existsById(ApplicationDefaults.DEFAULT_SETTINGS_ID)) {			Settings settings = new Settings();
-			settings.setId(ApplicationDefaults.DEFAULT_SETTINGS_ID);
-			settings.setSystemName("Uni-Guard Schedules");
-			settings.setAppTagline("Exam Invigilation Planning");
-			settings.setLogoUrl(null);
-			settings.setTheme(ThemeMode.LIGHT);
-			settings.setUniversityName("University");
-			settings.setDepartment(null);
-			settings.setExamPeriod(ApplicationDefaults.DEFAULT_EXAM_PERIOD);
-			settingsRepository.save(settings);
-		}
-
-		scheduleGroupSupport.ensureDefaultGroupAndAttachOrphans();
+		universityProvisioning.ensureData(TenantContext.DEFAULT_UNIVERSITY_ID, defaultName);
 	}
 
 	/**
@@ -117,6 +129,7 @@ public class DataInitializer implements ApplicationRunner {
 			admin.setRole(AdminRole.ADMIN);
 			admin.setEnabled(true);
 			admin.setMustChangePassword(false);
+			admin.setUniversityId(TenantContext.DEFAULT_UNIVERSITY_ID);
 			admin.setPasswordHash(passwordEncoder.encode(password));
 			adminUserRepository.saveAndFlush(admin);
 			auditService.recordAfterCommit(new AuditEntry("FIRST_ADMIN_CREATED", AuditCategory.USERS, "USER", null,
@@ -190,6 +203,7 @@ public class DataInitializer implements ApplicationRunner {
 		demoUser.setPasswordHash(passwordEncoder.encode(randomPassword));
 		demoUser.setRole(AdminRole.DEMO_ADMIN);
 		demoUser.setEnabled(true);
+		demoUser.setUniversityId(TenantContext.DEFAULT_UNIVERSITY_ID);
 		adminUserRepository.saveAndFlush(demoUser);
 
 		LOGGER.warn("[DEMO] Demo account CREATED for email='{}' with role=DEMO_ADMIN. " +

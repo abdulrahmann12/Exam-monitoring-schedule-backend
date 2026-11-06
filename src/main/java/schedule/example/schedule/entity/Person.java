@@ -1,6 +1,7 @@
 package schedule.example.schedule.entity;
 
 import jakarta.persistence.CollectionTable;
+import org.hibernate.annotations.TenantId;
 import jakarta.persistence.Column;
 import jakarta.persistence.Version;
 import jakarta.persistence.ElementCollection;
@@ -50,10 +51,10 @@ import java.util.UUID;
         indexes = {
                 @Index(name = "idx_person_role", columnList = "role"),
                 @Index(name = "idx_person_name", columnList = "name"),
-                @Index(name = "idx_person_normalized_name", columnList = "normalized_name", unique = true),
+                @Index(name = "ux_person_university_normalized_name", columnList = "university_id, normalized_name", unique = true),
                 @Index(name = "idx_person_active", columnList = "active"),
                 @Index(name = "idx_person_department", columnList = "department"),
-                @Index(name = "idx_person_email", columnList = "email", unique = true)
+                @Index(name = "ux_person_university_email", columnList = "university_id, email", unique = true)
         }
 )
 public class Person {
@@ -62,17 +63,25 @@ public class Person {
         @GeneratedValue(strategy = GenerationType.UUID)
         private UUID id;
 
+        /**
+         * The university this row belongs to. Set automatically from the signed-in user's university;
+         * Hibernate also adds it to every query, so other universities' rows are never visible.
+         */
+        @TenantId
+        @Column(name = "university_id", nullable = false, updatable = false)
+        private UUID universityId;
+
         @Column(nullable = false, length = 160)
         private String name;
 
-        @Column(name = "normalized_name", length = 160, unique = true)
+        @Column(name = "normalized_name", length = 160)
         private String normalizedName;
 
         @Column(nullable = false, length = 160)
         private String department;
 
         /** Optional unique address used for schedule notification emails. */
-        @Column(length = 255, unique = true)
+        @Column(length = 255)
         private String email;
 
         @Setter(AccessLevel.NONE)
@@ -178,6 +187,11 @@ public class Person {
         void deriveMaxParallelRooms() {
                 this.maxParallelRooms = parallelRoomsFor(role);
                 this.subjectCodes = normalizeSubjectCodes(subjectCodes);
+                // The mapper builds entities without the setters, so repeat their clean-up here:
+                // otherwise normalizedName stays empty (duplicate names go unnoticed, name search
+                // misses the person) and a blank email is stored as "" instead of null.
+                setName(name);
+                setEmail(email);
         }
 
         public void setSubjectCodes(Set<String> codes) {

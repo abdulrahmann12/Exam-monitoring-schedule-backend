@@ -16,6 +16,7 @@ import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.ScheduleGroupRepository;
 import schedule.example.schedule.repository.SettingsRepository;
 import schedule.example.schedule.repository.TimeSlotRepository;
+import schedule.example.schedule.tenant.TenantContext;
 
 import java.text.MessageFormat;
 import java.util.UUID;
@@ -47,8 +48,8 @@ public class ScheduleGroupSupport {
 
 	@Transactional
 	public ScheduleGroup getOrCreateDefaultGroup() {
-		return scheduleGroupRepository.findById(ApplicationDefaults.DEFAULT_SCHEDULE_GROUP_ID)
-				.or(scheduleGroupRepository::findFirstByOrderByCreatedAtAsc)
+		// Tenant-filtered: always the current university's oldest exam period.
+		return scheduleGroupRepository.findFirstByOrderByCreatedAtAsc()
 				.orElseGet(this::createDefaultGroup);
 	}
 
@@ -86,15 +87,16 @@ public class ScheduleGroupSupport {
 	}
 
 	private ScheduleGroup createDefaultGroup() {
-		String name = settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID)
+		String name = settingsRepository.findById(TenantContext.require())
 				.map(Settings::getExamPeriod)
 				.map(this::normalizeGroupName)
 				.orElse(ApplicationDefaults.DEFAULT_EXAM_PERIOD);
 
 		name = ensureUniqueName(name);
 
+		// A fresh id per university (existing installs keep their original default period row).
 		ScheduleGroup group = ScheduleGroup.builder()
-				.id(ApplicationDefaults.DEFAULT_SCHEDULE_GROUP_ID)
+				.id(UUID.randomUUID())
 				.name(name)
 				.active(true)
 				.build();
@@ -107,7 +109,7 @@ public class ScheduleGroupSupport {
 		if (scheduleGroupRepository.findByNameIgnoreCase(desiredName).isEmpty()) {
 			return desiredName;
 		}
-		return desiredName + " (" + ApplicationDefaults.DEFAULT_SCHEDULE_GROUP_ID.toString().substring(0, 8) + ")";
+		return desiredName + " (" + UUID.randomUUID().toString().substring(0, 8) + ")";
 	}
 
 	private String normalizeGroupName(String name) {

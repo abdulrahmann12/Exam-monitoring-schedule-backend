@@ -28,7 +28,8 @@ import java.util.UUID;
 		@Index(name = "idx_audit_events_occurred_at", columnList = "occurred_at"),
 		@Index(name = "idx_audit_events_category_time", columnList = "category, occurred_at"),
 		@Index(name = "idx_audit_events_actor_email", columnList = "actor_email"),
-		@Index(name = "idx_audit_events_action", columnList = "action")
+		@Index(name = "idx_audit_events_action", columnList = "action"),
+		@Index(name = "idx_audit_events_university_time", columnList = "university_id, occurred_at")
 	}
 )
 public class AuditEvent {
@@ -36,6 +37,10 @@ public class AuditEvent {
 	@Id
 	@GeneratedValue(strategy = GenerationType.UUID)
 	private UUID id;
+
+	/** University the event belongs to; administrators only see their own university's events. */
+	@Column(name = "university_id")
+	private UUID universityId;
 
 	@Column(name = "occurred_at", nullable = false)
 	private Instant occurredAt;

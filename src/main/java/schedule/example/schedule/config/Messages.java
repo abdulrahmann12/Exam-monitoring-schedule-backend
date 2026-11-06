@@ -102,6 +102,7 @@ public final class Messages {
 	public static final String AUTH_LINK_INVALID = "This link is invalid, already used or expired. Ask for a new one.";
 	public static final String AUTH_RESET_REQUESTED = "If an account exists for this email, we have sent a link to reset the password. Check your inbox (and spam folder).";
 	public static final String AUTH_TOO_MANY_RESET_REQUESTS = "Too many requests. Please wait a few minutes and try again.";
+	public static final String AUTH_UNIVERSITY_INACTIVE = "Access for your university is currently paused. Please contact support.";
 	public static final String AUTH_ACCESS_DENIED = "You do not have permission to do this.";
 
 	// ==================== User Management Messages ====================

@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import schedule.example.schedule.entity.AuditEvent;
 import schedule.example.schedule.repository.AuditEventRepository;
+import schedule.example.schedule.tenant.TenantContext;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -46,8 +47,12 @@ public class AuditQueryService {
 	}
 
 	private static Specification<AuditEvent> specification(Filter filter) {
+		// The log table is not Hibernate-filtered (sign-in events are written before anyone is
+		// signed in), so the university is always added here explicitly.
+		java.util.UUID universityId = TenantContext.require();
 		return (root, query, cb) -> {
 			List<Predicate> predicates = new ArrayList<>();
+			predicates.add(cb.equal(root.get("universityId"), universityId));
 			if (hasText(filter.category())) {
 				predicates.add(cb.equal(root.get("category"), filter.category().trim().toUpperCase(Locale.ROOT)));
 			}

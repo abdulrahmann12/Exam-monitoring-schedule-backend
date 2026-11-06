@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import schedule.example.schedule.config.ApplicationDefaults;
 import schedule.example.schedule.repository.SettingsRepository;
+import schedule.example.schedule.tenant.TenantContext;
 
 /**
  * Schedule-wide write lock.
@@ -32,7 +33,7 @@ public class ScheduleWriteLock {
 
 	@Transactional(propagation = Propagation.MANDATORY)
 	public void acquire() {
-		if (settingsRepository.lockById(ApplicationDefaults.DEFAULT_SETTINGS_ID).isEmpty()) {
+		if (settingsRepository.lockById(TenantContext.require()).isEmpty()) {
 			LOGGER.warn("Settings row missing — schedule write lock could not be taken.");
 		}
 	}

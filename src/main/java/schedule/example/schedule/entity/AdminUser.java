@@ -44,6 +44,14 @@ public class AdminUser {
 	@GeneratedValue(strategy = GenerationType.UUID)
 	private UUID id;
 
+	/**
+	 * The user's university. Not a Hibernate tenant filter on purpose: sign-in finds the account by
+	 * email first, then everything the user does is limited to this university.
+	 * Null is reserved for the platform owner (super-admin, a later step).
+	 */
+	@Column(name = "university_id")
+	private UUID universityId;
+
 	@Column(nullable = false, unique = true, length = 160)
 	private String email;
 

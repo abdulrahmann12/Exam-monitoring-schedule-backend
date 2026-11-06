@@ -19,8 +19,13 @@ public interface AdminUserRepository extends JpaRepository<AdminUser, UUID> {
 
 	boolean existsByRole(AdminRole role);
 
-	/** Every account except the given role (used to hide the system demo account), sorted by email. */
-	List<AdminUser> findByRoleNotOrderByEmailAsc(AdminRole role);
+	/** Upgrade helper: accounts created before universities existed join the given university. */
+	@Modifying
+	@Query("UPDATE AdminUser a SET a.universityId = :universityId WHERE a.universityId IS NULL")
+	int assignUniversityWhereMissing(UUID universityId);
+
+	/** One university's accounts except the given role (hides the demo account), sorted by email. */
+	List<AdminUser> findByUniversityIdAndRoleNotOrderByEmailAsc(UUID universityId, AdminRole role);
 
 	/**
 	 * Locks all enabled administrator rows until the transaction ends. Two administrators demoting
@@ -28,8 +33,8 @@ public interface AdminUserRepository extends JpaRepository<AdminUser, UUID> {
 	 * administrator" rule cannot be broken by a race.
 	 */
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
-	@Query("SELECT a FROM AdminUser a WHERE a.role = schedule.example.schedule.entity.enums.AdminRole.ADMIN AND a.enabled = true")
-	List<AdminUser> lockActiveAdmins();
+	@Query("SELECT a FROM AdminUser a WHERE a.universityId = :universityId AND a.role = schedule.example.schedule.entity.enums.AdminRole.ADMIN AND a.enabled = true")
+	List<AdminUser> lockActiveAdmins(UUID universityId);
 
 	/**
 	 * Deletes any admin rows that were created without a password hash (e.g. rows inserted

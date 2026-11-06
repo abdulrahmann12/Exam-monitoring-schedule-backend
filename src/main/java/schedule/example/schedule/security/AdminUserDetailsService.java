@@ -6,7 +6,9 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
 import schedule.example.schedule.entity.AdminUser;
+import schedule.example.schedule.entity.University;
 import schedule.example.schedule.repository.AdminUserRepository;
+import schedule.example.schedule.repository.UniversityRepository;
 import schedule.example.schedule.service.SessionService;
 
 import java.util.UUID;
@@ -23,10 +25,18 @@ public class AdminUserDetailsService implements UserDetailsService {
 
 	private final AdminUserRepository adminUserRepository;
 	private final SessionService sessionService;
+	private final UniversityRepository universityRepository;
 
-	public AdminUserDetailsService(AdminUserRepository adminUserRepository, SessionService sessionService) {
+	public AdminUserDetailsService(AdminUserRepository adminUserRepository, SessionService sessionService, UniversityRepository universityRepository) {
 		this.adminUserRepository = adminUserRepository;
 		this.sessionService = sessionService;
+		this.universityRepository = universityRepository;
+	}
+
+	/** True when the user's university exists and is active (users without a university: platform owner). */
+	public boolean universityActive(AdminUser user) {
+		return user.getUniversityId() == null
+			|| universityRepository.findById(user.getUniversityId()).map(University::isActive).orElse(false);
 	}
 
 	/**
@@ -65,6 +75,9 @@ public class AdminUserDetailsService implements UserDetailsService {
 		}
 		if (!sessionService.isActive(sessionId, user.getId())) {
 			throw new UsernameNotFoundException("Session has ended");
+		}
+		if (!universityActive(user)) {
+			throw new UsernameNotFoundException("University is not active");
 		}
 		if (user.getPasswordHash() == null || user.getPasswordHash().isBlank()) {
 			throw new UsernameNotFoundException("Account has no password set.");

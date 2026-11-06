@@ -1,6 +1,7 @@
 package schedule.example.schedule.entity;
 
 import jakarta.persistence.CascadeType;
+import org.hibernate.annotations.TenantId;
 import jakarta.persistence.Column;
 import jakarta.persistence.Version;
 import jakarta.persistence.Entity;
@@ -69,6 +70,14 @@ public class RoomAssignment {
         @Id
         @GeneratedValue(strategy = GenerationType.UUID)
         private UUID id;
+
+        /**
+         * The university this row belongs to. Set automatically from the signed-in user's university;
+         * Hibernate also adds it to every query, so other universities' rows are never visible.
+         */
+        @TenantId
+        @Column(name = "university_id", nullable = false, updatable = false)
+        private UUID universityId;
 
         /**
          * Nullable only so existing rows can be attached on startup.

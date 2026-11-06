@@ -1,5 +1,6 @@
 package schedule.example.schedule.entity;
 
+import org.hibernate.annotations.TenantId;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -25,6 +26,14 @@ public class Settings {
 
 	@Id
 	private UUID id;
+
+	/**
+	 * The university this row belongs to. Set automatically from the signed-in user's university;
+	 * Hibernate also adds it to every query, so other universities' rows are never visible.
+	 */
+	@TenantId
+	@Column(name = "university_id", nullable = false, updatable = false)
+	private UUID universityId;
 
 	@Column(nullable = false, length = 160)
 	private String systemName;

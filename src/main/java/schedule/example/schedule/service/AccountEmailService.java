@@ -69,7 +69,7 @@ public class AccountEmailService {
 
 	/** @return true when an email is being sent; false when email is not configured. */
 	public boolean sendInvite(AdminUser user, AccountTokenService.Issued link, String invitedBy) {
-		String appName = appName();
+		String appName = appName(user);
 		String subject = "You're invited to " + appName;
 		String html = layout(appName,
 			"<p>Hello" + greetingName(user) + ",</p>"
@@ -82,7 +82,7 @@ public class AccountEmailService {
 	}
 
 	public boolean sendPasswordReset(AdminUser user, AccountTokenService.Issued link) {
-		String appName = appName();
+		String appName = appName(user);
 		String subject = "Reset your " + appName + " password";
 		String html = layout(appName,
 			"<p>Hello" + greetingName(user) + ",</p>"
@@ -114,8 +114,11 @@ public class AccountEmailService {
 		return true;
 	}
 
-	private String appName() {
-		return settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID)
+	private String appName(AdminUser user) {
+		if (user.getUniversityId() == null) {
+			return "Uni-Guard Schedules";
+		}
+		return settingsRepository.findById(user.getUniversityId())
 			.map(Settings::getSystemName)
 			.filter(name -> name != null && !name.isBlank())
 			.orElse("Uni-Guard Schedules");

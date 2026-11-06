@@ -3,6 +3,7 @@ package schedule.example.schedule.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.jdbc.core.JdbcTemplate;
+import schedule.example.schedule.tenant.TenantContext;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
@@ -39,18 +40,20 @@ public class DashboardService {
      * <p>Staff and room totals stay global. Assignment volume and "top assigned"
      * use only rooms in the requested (or default) schedule group.
      */
-    @Cacheable(value = CacheConfig.CACHE_DASHBOARD, key = "#scheduleGroupId")
+    @Cacheable(value = CacheConfig.CACHE_DASHBOARD,
+            key = "T(schedule.example.schedule.tenant.TenantContext).require() + ':' + #scheduleGroupId")
     public DashboardSummaryResponse getSummary(UUID scheduleGroupId) {
-        UUID groupId = scheduleGroupId != null
-                ? scheduleGroupSupport.requireGroup(scheduleGroupId).getId()
-                : ApplicationDefaults.DEFAULT_SCHEDULE_GROUP_ID;
+        // requireGroup is tenant-filtered: another university's group id answers 404.
+        UUID groupId = scheduleGroupSupport.requireGroup(scheduleGroupId).getId();
+        UUID universityId = TenantContext.require();
+        // Plain SQL bypasses Hibernate's university filter, so every count filters by university here.
         Map<String, Object> counts = jdbcTemplate.queryForMap("""
             SELECT
-                (SELECT COUNT(*) FROM people WHERE role = 'CHIEF_INVIGILATOR' AND active = TRUE) AS chiefs,
-                (SELECT COUNT(*) FROM people WHERE role = 'INVIGILATOR'       AND active = TRUE) AS invigilators,
-                (SELECT COUNT(*) FROM rooms   WHERE active = TRUE)                               AS rooms,
-                (SELECT COUNT(*) FROM room_assignments WHERE schedule_group_id = ?)              AS assignments
-            """, groupId);
+                (SELECT COUNT(*) FROM people WHERE university_id = ? AND role = 'CHIEF_INVIGILATOR' AND active = TRUE) AS chiefs,
+                (SELECT COUNT(*) FROM people WHERE university_id = ? AND role = 'INVIGILATOR'       AND active = TRUE) AS invigilators,
+                (SELECT COUNT(*) FROM rooms  WHERE university_id = ? AND active = TRUE)                               AS rooms,
+                (SELECT COUNT(*) FROM room_assignments WHERE university_id = ? AND schedule_group_id = ?)             AS assignments
+            """, universityId, universityId, universityId, universityId, groupId);
 
         long chiefs           = ((Number) counts.get("chiefs")).longValue();
         long invigilators     = ((Number) counts.get("invigilators")).longValue();

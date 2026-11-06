@@ -30,6 +30,7 @@ import schedule.example.schedule.exception.ValidationException;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.security.PasswordPolicy;
 import schedule.example.schedule.security.SecureTokens;
+import schedule.example.schedule.tenant.TenantContext;
 
 import java.util.List;
 import java.util.Locale;
@@ -65,7 +66,7 @@ public class UserManagementService {
 
 	@Transactional(readOnly = true)
 	public List<UserResponse> list() {
-		return adminUserRepository.findByRoleNotOrderByEmailAsc(AdminRole.DEMO_ADMIN).stream()
+		return adminUserRepository.findByUniversityIdAndRoleNotOrderByEmailAsc(TenantContext.require(), AdminRole.DEMO_ADMIN).stream()
 			.map(this::toResponse)
 			.toList();
 	}
@@ -92,6 +93,7 @@ public class UserManagementService {
 		user.setDisplayName(cleanName(request.displayName()));
 		user.setRole(request.role());
 		user.setEnabled(true);
+		user.setUniversityId(TenantContext.require()); // new users join the administrator's university
 		if (request.invite()) {
 			setUnusablePassword(user);
 		} else {
@@ -156,7 +158,7 @@ public class UserManagementService {
 	@Transactional
 	public UserResponse update(UUID id, @Valid UpdateUserRequest request, UUID actorId) {
 		// Lock first, then load the target, so the checks below see the current state.
-		List<AdminUser> activeAdmins = adminUserRepository.lockActiveAdmins();
+		List<AdminUser> activeAdmins = adminUserRepository.lockActiveAdmins(TenantContext.require());
 		AdminUser user = requireManageable(id);
 		requireAssignable(request.role());
 		boolean enabled = request.enabled();
@@ -231,7 +233,7 @@ public class UserManagementService {
 
 	@Transactional
 	public void delete(UUID id, UUID actorId) {
-		List<AdminUser> activeAdmins = adminUserRepository.lockActiveAdmins();
+		List<AdminUser> activeAdmins = adminUserRepository.lockActiveAdmins(TenantContext.require());
 		AdminUser user = requireManageable(id);
 		if (user.getId().equals(actorId)) {
 			throw new BusinessRuleViolationException(Messages.USER_CANNOT_CHANGE_SELF);
@@ -266,6 +268,8 @@ public class UserManagementService {
 
 	private AdminUser requireManageable(UUID id) {
 		AdminUser user = adminUserRepository.findById(id)
+			// Another university's account answers exactly like a missing one.
+			.filter(found -> TenantContext.require().equals(found.getUniversityId()))
 			.orElseThrow(() -> new NotFoundException(Messages.USER_NOT_FOUND));
 		if (user.getRole() == AdminRole.DEMO_ADMIN) {
 			throw new BusinessRuleViolationException(Messages.USER_DEMO_ACCOUNT_PROTECTED);

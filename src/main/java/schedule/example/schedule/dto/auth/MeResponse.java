@@ -13,6 +13,8 @@ public record MeResponse(
         String displayName,
         String role,
         List<String> roles,
-        boolean mustChangePassword
+        boolean mustChangePassword,
+        UUID universityId,
+        String universityName
 ) {
 }

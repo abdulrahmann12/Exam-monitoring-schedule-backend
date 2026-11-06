@@ -1,5 +1,6 @@
 package schedule.example.schedule.entity;
 
+import org.hibernate.annotations.TenantId;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -39,7 +40,7 @@ import java.util.UUID;
 	name = "rooms",
 	indexes = {
 		@Index(name = "idx_room_name", columnList = "name"),
-		@Index(name = "idx_room_normalized_name", columnList = "normalized_name", unique = true),
+		@Index(name = "ux_room_university_normalized_name", columnList = "university_id, normalized_name", unique = true),
 		@Index(name = "idx_room_type", columnList = "type"),
 		@Index(name = "idx_room_active", columnList = "active")
 	}
@@ -50,12 +51,20 @@ public class Room {
 	@GeneratedValue(strategy = GenerationType.UUID)
 	private UUID id;
 
+	/**
+	 * The university this row belongs to. Set automatically from the signed-in user's university;
+	 * Hibernate also adds it to every query, so other universities' rows are never visible.
+	 */
+	@TenantId
+	@Column(name = "university_id", nullable = false, updatable = false)
+	private UUID universityId;
+
 	@Setter(AccessLevel.NONE)
 	@Column(nullable = false, length = 120)
 	private String name;
 
 	@Setter(AccessLevel.NONE)
-	@Column(name = "normalized_name", length = 120, unique = true)
+	@Column(name = "normalized_name", length = 120)
 	private String normalizedName;
 
 	@Column(nullable = false)
@@ -84,6 +93,9 @@ public class Room {
 		if (hallGender == null) {
 			hallGender = HallGender.MIXED;
 		}
+		// The mapper builds entities without setName(): keep normalizedName in sync here, or
+		// duplicate names go unnoticed and name search misses the room.
+		setName(name);
 	}
 
 	@CreatedDate

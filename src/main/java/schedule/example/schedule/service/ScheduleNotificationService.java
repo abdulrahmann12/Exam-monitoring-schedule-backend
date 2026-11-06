@@ -29,6 +29,7 @@ import schedule.example.schedule.exception.NotFoundException;
 import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.ScheduleGroupRepository;
 import schedule.example.schedule.repository.SettingsRepository;
+import schedule.example.schedule.tenant.TenantContext;
 
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
@@ -80,7 +81,7 @@ public class ScheduleNotificationService {
 
 		ScheduleGroup group = scheduleGroupRepository.findById(groupId)
 			.orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.SCHEDULE_GROUP_NOT_FOUND, groupId)));
-		Settings settings = settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID).orElse(null);
+		Settings settings = settingsRepository.findById(TenantContext.require()).orElse(null);
 		List<RoomAssignment> assignments = roomAssignmentRepository.findAllDetailedByScheduleGroupId(groupId);
 
 		Map<UUID, RecipientSchedule> recipients = new LinkedHashMap<>();

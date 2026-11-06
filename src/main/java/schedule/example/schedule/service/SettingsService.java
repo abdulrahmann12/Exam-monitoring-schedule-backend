@@ -16,6 +16,9 @@ import schedule.example.schedule.entity.Settings;
 import schedule.example.schedule.entity.enums.ThemeMode;
 import schedule.example.schedule.mapper.SettingsMapper;
 import schedule.example.schedule.repository.SettingsRepository;
+import schedule.example.schedule.tenant.TenantContext;
+
+import java.util.UUID;
 
 @Service
 @Validated
@@ -27,34 +30,42 @@ public class SettingsService {
 	private final SettingsMapper settingsMapper;
 	private final DemoModeService demoModeService;
 	private final ScheduleGroupSupport scheduleGroupSupport;
+	private final schedule.example.schedule.repository.UniversityRepository universityRepository;
 
-	@Cacheable(value = CacheConfig.CACHE_SETTINGS, key = "'settings'")
+	/** Cached per university: the key must never be shared between universities. */
+	@Cacheable(value = CacheConfig.CACHE_SETTINGS, key = "T(schedule.example.schedule.tenant.TenantContext).require()")
+	// Not read-only: the first call for a university creates its settings (and first exam period).
+	// In a read-only transaction those inserts were silently dropped.
+	@Transactional
 	public SettingsResponse getSettings() {
 		Settings settings = getOrCreateSettingsEntity();
 		return withActiveGroupExamPeriod(settingsMapper.toResponse(settings));
 	}
 
 	@Transactional
-	@CachePut(value = CacheConfig.CACHE_SETTINGS, key = "'settings'")
+	@CachePut(value = CacheConfig.CACHE_SETTINGS, key = "T(schedule.example.schedule.tenant.TenantContext).require()")
 	public SettingsResponse updateSettings(@Valid SettingsRequest request) {
 		demoModeService.rejectIfDemoUser("update-settings");
 		Settings settings = getOrCreateSettingsEntity();
 		settingsMapper.updateEntity(request, settings);
-		settings.setId(ApplicationDefaults.DEFAULT_SETTINGS_ID);
+		settings.setId(TenantContext.require());
 		scheduleGroupSupport.syncDefaultGroupName(request.examPeriod());
 		return withActiveGroupExamPeriod(settingsMapper.toResponse(settingsRepository.save(settings)));
 	}
 
 	private Settings getOrCreateSettingsEntity() {
-		return settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID)
+		UUID universityId = TenantContext.require();
+		return settingsRepository.findById(universityId)
 			.orElseGet(() -> {
 				Settings settings = new Settings();
-				settings.setId(ApplicationDefaults.DEFAULT_SETTINGS_ID);
+				settings.setId(universityId);
 				settings.setSystemName("Uni-Guard Schedules");
 				settings.setAppTagline("Exam Invigilation Planning");
 				settings.setLogoUrl(null);
 				settings.setTheme(ThemeMode.LIGHT);
-				settings.setUniversityName("University");
+				// Start from the university's real name (its settings may not exist yet).
+				settings.setUniversityName(universityRepository.findById(universityId)
+					.map(schedule.example.schedule.entity.University::getName).orElse("University"));
 				settings.setDepartment(null);
 				settings.setExamPeriod(ApplicationDefaults.DEFAULT_EXAM_PERIOD);
 				return settingsRepository.save(settings);

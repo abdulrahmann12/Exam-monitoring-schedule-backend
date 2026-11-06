@@ -9,6 +9,7 @@ import schedule.example.schedule.repository.PersonDutyWindow;
 import schedule.example.schedule.repository.PersonUnavailabilityRepository;
 import schedule.example.schedule.repository.RoomAssignmentRepository;
 import schedule.example.schedule.repository.SettingsRepository;
+import schedule.example.schedule.tenant.TenantContext;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -65,9 +66,9 @@ public class SchedulingContextLoader {
 		return load(examDates, assignment -> false);
 	}
 
-	/** Current institution-wide limits. */
+	/** The current university's limits. */
 	public SchedulingSettings settings() {
-		return settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID)
+		return settingsRepository.findById(TenantContext.require())
 			.map(SchedulingSettings::from)
 			.orElse(SchedulingSettings.NONE);
 	}

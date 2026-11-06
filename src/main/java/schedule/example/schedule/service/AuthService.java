@@ -26,6 +26,7 @@ import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.exception.ValidationException;
 import schedule.example.schedule.repository.AdminUserRepository;
+import schedule.example.schedule.security.AdminUserDetailsService;
 import schedule.example.schedule.security.JwtTokenProvider;
 import schedule.example.schedule.security.PasswordPolicy;
 
@@ -46,6 +47,7 @@ public class AuthService {
 	private final LoginAttemptService loginAttemptService;
 	private final SessionService sessionService;
 	private final AuditService auditService;
+	private final AdminUserDetailsService adminUserDetailsService;
 
 	/** Everything the controller needs to set the two cookies. */
 	public record SignedIn(String email, String accessToken, Instant accessExpiresAt, String refreshToken, Instant sessionExpiresAt) {
@@ -64,33 +66,46 @@ public class AuthService {
 				.withOutcome(AuditEntry.Outcome.DENIED).forAccount(request.email()));
 			throw locked;
 		}
+		AdminUser admin;
 		try {
 			Authentication authentication = authenticationManager.authenticate(
 				new UsernamePasswordAuthenticationToken(request.email(), request.password())
 			);
-			AdminUser admin = requireAdmin(authentication.getName());
-			loginAttemptService.recordSuccess(admin.getId());
-			SignedIn signedIn = openSession(admin, httpRequest);
-			auditService.record(authEvent("LOGIN_SUCCEEDED", AuditCategory.AUTH, "Signed in").forAccount(admin.getEmail()));
-			return signedIn;
+			admin = requireAdmin(authentication.getName());
 		} catch (AuthenticationException ex) {
-			if (ex instanceof DisabledException disabled && account.isPresent()) {
-				rejectDisabled(account.get(), request.password(), disabled);
-			}
-			auditService.record(authEvent("LOGIN_FAILED", AuditCategory.AUTH,
-					account.isPresent() ? "Failed sign-in (wrong password)" : "Failed sign-in (no account with this email)")
-				.withOutcome(AuditEntry.Outcome.FAILURE).forAccount(request.email()));
-			if (account.isPresent()) {
-				Instant lockedUntil = loginAttemptService.recordFailure(account.get().getId());
-				if (lockedUntil != null) {
-					auditService.record(authEvent("ACCOUNT_LOCKED", AuditCategory.SECURITY,
-							"Account locked after too many wrong passwords (until " + lockedUntil + ")")
-						.withOutcome(AuditEntry.Outcome.DENIED).forAccount(account.get().getEmail()));
-					throw loginAttemptService.lockedException(lockedUntil); // tell the user right away
-				}
-			}
-			throw new BadCredentialsException(Messages.AUTH_INVALID_CREDENTIALS, ex);
+			throw failedSignIn(request, account, ex);
 		}
+		// The password was right. Checked only now (and outside the wrong-password handling), so it
+		// reveals nothing to someone who does not know the password and never counts as a failure.
+		if (!adminUserDetailsService.universityActive(admin)) {
+			auditService.record(authEvent("LOGIN_REFUSED_UNIVERSITY_INACTIVE", AuditCategory.SECURITY, "Sign-in refused: university is not active")
+				.withOutcome(AuditEntry.Outcome.DENIED).forAccount(admin.getEmail()));
+			throw new DisabledException(Messages.AUTH_UNIVERSITY_INACTIVE);
+		}
+		loginAttemptService.recordSuccess(admin.getId());
+		SignedIn signedIn = openSession(admin, httpRequest);
+		auditService.record(authEvent("LOGIN_SUCCEEDED", AuditCategory.AUTH, "Signed in").forAccount(admin.getEmail()));
+		return signedIn;
+	}
+
+	/** Wrong password, unknown account or disabled account: records it and builds the error to throw. */
+	private RuntimeException failedSignIn(LoginRequest request, java.util.Optional<AdminUser> account, AuthenticationException ex) {
+		if (ex instanceof DisabledException disabled && account.isPresent()) {
+			rejectDisabled(account.get(), request.password(), disabled);
+		}
+		auditService.record(authEvent("LOGIN_FAILED", AuditCategory.AUTH,
+				account.isPresent() ? "Failed sign-in (wrong password)" : "Failed sign-in (no account with this email)")
+			.withOutcome(AuditEntry.Outcome.FAILURE).forAccount(request.email()));
+		if (account.isPresent()) {
+			Instant lockedUntil = loginAttemptService.recordFailure(account.get().getId());
+			if (lockedUntil != null) {
+				auditService.record(authEvent("ACCOUNT_LOCKED", AuditCategory.SECURITY,
+						"Account locked after too many wrong passwords (until " + lockedUntil + ")")
+					.withOutcome(AuditEntry.Outcome.DENIED).forAccount(account.get().getEmail()));
+				return loginAttemptService.lockedException(lockedUntil); // tell the user right away
+			}
+		}
+		return new BadCredentialsException(Messages.AUTH_INVALID_CREDENTIALS, ex);
 	}
 
 	/**

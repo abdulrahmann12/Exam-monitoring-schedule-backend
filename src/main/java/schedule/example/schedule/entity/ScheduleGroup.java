@@ -1,5 +1,6 @@
 package schedule.example.schedule.entity;
 
+import org.hibernate.annotations.TenantId;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -31,7 +32,7 @@ import java.util.UUID;
 @Table(
 		name = "schedule_groups",
 		indexes = {
-				@Index(name = "idx_schedule_group_name", columnList = "name", unique = true),
+				@Index(name = "ux_schedule_group_university_name", columnList = "university_id, name", unique = true),
 				@Index(name = "idx_schedule_group_active", columnList = "active")
 		}
 )
@@ -40,7 +41,15 @@ public class ScheduleGroup {
 	@Id
 	private UUID id;
 
-	@Column(nullable = false, length = 120, unique = true)
+	/**
+	 * The university this row belongs to. Set automatically from the signed-in user's university;
+	 * Hibernate also adds it to every query, so other universities' rows are never visible.
+	 */
+	@TenantId
+	@Column(name = "university_id", nullable = false, updatable = false)
+	private UUID universityId;
+
+	@Column(nullable = false, length = 120)
 	private String name;
 
 	@Column(length = 500)

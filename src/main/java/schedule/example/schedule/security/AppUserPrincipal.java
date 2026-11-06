@@ -21,6 +21,8 @@ public class AppUserPrincipal extends User {
 	private final boolean mustChangePassword;
 	/** Session (device) of the current request; null during the password login itself. */
 	private final UUID sessionId;
+	/** The user's university; every data access in this request is limited to it. */
+	private final UUID universityId;
 
 	public AppUserPrincipal(AdminUser user) {
 		this(user, null);
@@ -41,6 +43,11 @@ public class AppUserPrincipal extends User {
 		this.role = roleOf(user);
 		this.mustChangePassword = user.isMustChangePassword();
 		this.sessionId = sessionId;
+		this.universityId = user.getUniversityId();
+	}
+
+	public UUID getUniversityId() {
+		return universityId;
 	}
 
 	public UUID getSessionId() {

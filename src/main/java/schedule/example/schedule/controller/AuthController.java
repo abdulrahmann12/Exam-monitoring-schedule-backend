@@ -27,7 +27,9 @@ import schedule.example.schedule.dto.auth.LoginRequest;
 import schedule.example.schedule.dto.auth.MeResponse;
 import schedule.example.schedule.dto.auth.SessionResponse;
 import schedule.example.schedule.dto.common.ApiErrorResponse;
+import schedule.example.schedule.entity.University;
 import schedule.example.schedule.exception.InvalidTokenException;
+import schedule.example.schedule.repository.UniversityRepository;
 import schedule.example.schedule.security.AppUserPrincipal;
 import schedule.example.schedule.security.AuthCookies;
 import schedule.example.schedule.service.AccountTokenService;
@@ -53,6 +55,7 @@ public class AuthController {
 	private final AuthCookies authCookies;
 	private final PasswordRecoveryService passwordRecoveryService;
 	private final AccountTokenService accountTokenService;
+	private final UniversityRepository universityRepository;
 
 	public AuthController(
 		AuthService authService,
@@ -60,7 +63,8 @@ public class AuthController {
 		DemoProperties demoProperties,
 		AuthCookies authCookies,
 		PasswordRecoveryService passwordRecoveryService,
-		AccountTokenService accountTokenService
+		AccountTokenService accountTokenService,
+		UniversityRepository universityRepository
 	) {
 		this.authService = authService;
 		this.demoAuthService = demoAuthService;
@@ -68,6 +72,7 @@ public class AuthController {
 		this.authCookies = authCookies;
 		this.passwordRecoveryService = passwordRecoveryService;
 		this.accountTokenService = accountTokenService;
+		this.universityRepository = universityRepository;
 	}
 
 	@PostMapping("/login")
@@ -115,7 +120,10 @@ public class AuthController {
 			user.getDisplayName(),
 			user.getRole().name(),
 			user.getAuthorities().stream().map(GrantedAuthority::getAuthority).toList(),
-			user.isMustChangePassword()
+			user.isMustChangePassword(),
+			user.getUniversityId(),
+			user.getUniversityId() == null ? null
+				: universityRepository.findById(user.getUniversityId()).map(University::getName).orElse(null)
 		);
 	}
 

@@ -18,7 +18,10 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import schedule.example.schedule.entity.AuditEvent;
+import schedule.example.schedule.entity.AdminUser;
+import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.repository.AuditEventRepository;
+import schedule.example.schedule.tenant.TenantContext;
 import schedule.example.schedule.security.AppUserPrincipal;
 
 import java.time.Instant;
@@ -42,15 +45,18 @@ public class AuditService {
 	private static final Logger LOGGER = LoggerFactory.getLogger(AuditService.class);
 
 	private final AuditEventRepository repository;
+	private final AdminUserRepository users;
 	private final TransactionTemplate ownTransaction;
 	private final int retentionDays;
 
 	public AuditService(
 		AuditEventRepository repository,
+		AdminUserRepository users,
 		PlatformTransactionManager transactionManager,
 		@Value("${app.audit.retention-days:365}") int retentionDays
 	) {
 		this.repository = repository;
+		this.users = users;
 		this.ownTransaction = new TransactionTemplate(transactionManager);
 		this.ownTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 		this.retentionDays = retentionDays;
@@ -115,6 +121,10 @@ public class AuditService {
 		if (entry.actorEmail() != null && event.getActorEmail() == null) {
 			event.setActorEmail(truncate(entry.actorEmail().trim().toLowerCase(), 160));
 		}
+		// The signed-in user's university; for events without one (failed sign-in, forgot
+		// password) the university of the account concerned. Unknown → platform-level (null).
+		event.setUniversityId(TenantContext.current().orElseGet(() -> event.getActorEmail() == null ? null
+			: users.findByEmailIgnoreCase(event.getActorEmail()).map(AdminUser::getUniversityId).orElse(null)));
 		HttpServletRequest request = currentRequest();
 		if (request != null) {
 			event.setIpAddress(truncate(request.getRemoteAddr(), 64));
