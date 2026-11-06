@@ -1,7 +1,10 @@
 name: Sync to Hugging Face hub
 
+# Deploys only after "Backend CI" has passed on main — a red build never reaches production.
 on:
-  push:
+  workflow_run:
+    workflows: ["Backend CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
@@ -11,10 +14,12 @@ concurrency:
 
 jobs:
   sync-to-hub:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
           lfs: true
           persist-credentials: false

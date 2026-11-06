@@ -36,3 +36,12 @@ out/
 ### VS Code ###
 .vscode/
 /target/
+
+### Secrets & local data ###
+.env
+.env.*
+!.env.example
+/config/
+/data/
+*.mv.db
+*.trace.db

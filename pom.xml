@@ -11,14 +11,15 @@
         <relativePath/>
     </parent>
 
-    <groupId>schedule.example</groupId>
-    <artifactId>schedule</artifactId>
+    <groupId>com.uniguard</groupId>
+    <artifactId>uniguard-schedule-api</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>schedule-backend</name>
+    <name>uniguard-schedule-api</name>
     <description>Spring Boot backend for exam invigilator scheduling</description>
 
     <properties>
-        <java.version>23</java.version>
+        <!-- Java 21 = current LTS supported by Spring Boot 3.5 and every major cloud runtime. -->
+        <java.version>21</java.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <jjwt.version>0.12.6</jjwt.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
@@ -97,9 +98,25 @@
             <artifactId>caffeine</artifactId>
         </dependency>
 
+        <!-- Versioned schema migrations (replaces hibernate ddl-auto=update) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- In-memory database for integration tests (MySQL compatibility mode) -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
