@@ -54,6 +54,12 @@ class MySqlUpgradeFromHibernateIT {
 			 var statement = connection.createStatement()) {
 			statement.execute("DROP TABLE flyway_schema_history");
 			insertLegacyData(statement);
+			// Production: old Hibernate added the same unique index at every start until admin_users had
+			// MySQL's maximum of 64 indexes, so V9's new index failed with "Too many keys specified".
+			for (int copy = 2; copy <= 63; copy++) {
+				statement.execute("ALTER TABLE admin_users ADD UNIQUE KEY email_" + copy + " (email)");
+			}
+			statement.execute("ALTER TABLE people ADD UNIQUE KEY email_2 (email)");
 		}
 		MySqlMigrationSupport.register(registry, SCHEMA);
 	}
@@ -106,6 +112,13 @@ class MySqlUpgradeFromHibernateIT {
 	@Test
 	void legacySchemaWithDataIsBaselinedAndUpgradedWithoutLosingARow() {
 		assertUpgraded(jdbcTemplate, "DATABASE()");
+		// The duplicate copies were removed; the named unique index on email is kept.
+		assertThat(jdbcTemplate.queryForObject(
+			"SELECT COUNT(DISTINCT index_name) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'admin_users' AND index_name LIKE 'email%'",
+			Integer.class)).isZero();
+		assertThat(jdbcTemplate.queryForObject(
+			"SELECT COUNT(DISTINCT index_name) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'admin_users' AND index_name = 'idx_admin_user_email'",
+			Integer.class)).isEqualTo(1);
 	}
 
 	/** Shared with the H2 version of this test. */
