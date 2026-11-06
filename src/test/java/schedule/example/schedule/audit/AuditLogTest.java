@@ -42,6 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@org.junit.jupiter.api.extension.ExtendWith(schedule.example.schedule.tenant.InDefaultUniversity.class)
 class AuditLogTest {
 
 	private static final String DOMAIN = "@audit.test";
@@ -243,7 +244,7 @@ class AuditLogTest {
 	// ── helpers ─────────────────────────────────────────────────────────────
 
 	private void save(String email, AdminRole role) {
-		users.save(AdminUser.builder().email(email).passwordHash(passwordEncoder.encode(PASSWORD)).role(role).build());
+		users.save(AdminUser.builder().universityId(schedule.example.schedule.tenant.TenantContext.DEFAULT_UNIVERSITY_ID).email(email).passwordHash(passwordEncoder.encode(PASSWORD)).role(role).build());
 	}
 
 	private String token(String email) {

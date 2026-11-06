@@ -222,12 +222,12 @@ class UserRolesTest {
 		try {
 			UUID lastAdmin = users.findByEmailIgnoreCase(ADMIN).orElseThrow().getId();
 			UUID someoneElse = UUID.randomUUID();
-			assertThatThrownBy(() -> userManagementService.update(lastAdmin, new UpdateUserRequest(null, AdminRole.VIEWER, true), someoneElse))
+			assertThatThrownBy(() -> inDefaultUniversity(() -> userManagementService.update(lastAdmin, new UpdateUserRequest(null, AdminRole.VIEWER, true), someoneElse)))
 				.isInstanceOf(BusinessRuleViolationException.class)
 				.hasMessageContaining("at least one active administrator");
-			assertThatThrownBy(() -> userManagementService.update(lastAdmin, new UpdateUserRequest(null, AdminRole.ADMIN, false), someoneElse))
+			assertThatThrownBy(() -> inDefaultUniversity(() -> userManagementService.update(lastAdmin, new UpdateUserRequest(null, AdminRole.ADMIN, false), someoneElse)))
 				.isInstanceOf(BusinessRuleViolationException.class);
-			assertThatThrownBy(() -> userManagementService.delete(lastAdmin, someoneElse))
+			assertThatThrownBy(() -> inDefaultUniversity(() -> userManagementService.delete(lastAdmin, someoneElse)))
 				.isInstanceOf(BusinessRuleViolationException.class);
 		} finally {
 			others.forEach(u -> { u.setEnabled(true); users.save(u); });
@@ -315,8 +315,12 @@ class UserRolesTest {
 
 	// ── helpers ─────────────────────────────────────────────────────────────
 
+	private static void inDefaultUniversity(Runnable work) {
+		schedule.example.schedule.tenant.TenantContext.runAs(schedule.example.schedule.tenant.TenantContext.DEFAULT_UNIVERSITY_ID, work);
+	}
+
 	private AdminUser save(String email, AdminRole role) {
-		return users.save(AdminUser.builder()
+		return users.save(AdminUser.builder().universityId(schedule.example.schedule.tenant.TenantContext.DEFAULT_UNIVERSITY_ID)
 			.email(email).passwordHash(passwordEncoder.encode(PASSWORD)).role(role).build());
 	}
 

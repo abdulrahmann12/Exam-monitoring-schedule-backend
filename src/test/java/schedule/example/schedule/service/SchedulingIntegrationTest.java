@@ -60,6 +60,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@org.junit.jupiter.api.extension.ExtendWith(schedule.example.schedule.tenant.InDefaultUniversity.class)
 class SchedulingIntegrationTest {
 
 	private static final LocalDate DAY = LocalDate.of(2027, 1, 10);
@@ -228,7 +229,9 @@ class SchedulingIntegrationTest {
 			futures.add(pool.submit(() -> {
 				start.await();
 				try {
-					create(g, slot, (Room) job[0], (Person) job[1], shared);
+					// Worker threads do not inherit the test's university: give it explicitly, as system code must.
+					schedule.example.schedule.tenant.TenantContext.runAs(schedule.example.schedule.tenant.TenantContext.DEFAULT_UNIVERSITY_ID,
+						() -> create(g, slot, (Room) job[0], (Person) job[1], shared));
 					successes.incrementAndGet();
 				} catch (ConflictException expected) {
 					conflicts.incrementAndGet();

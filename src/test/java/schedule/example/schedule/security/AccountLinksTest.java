@@ -277,7 +277,7 @@ class AccountLinksTest {
 	// ── helpers ─────────────────────────────────────────────────────────────
 
 	private AdminUser save(String email, AdminRole role) {
-		return users.save(AdminUser.builder().email(email).passwordHash(passwordEncoder.encode(PASSWORD)).role(role).build());
+		return users.save(AdminUser.builder().universityId(schedule.example.schedule.tenant.TenantContext.DEFAULT_UNIVERSITY_ID).email(email).passwordHash(passwordEncoder.encode(PASSWORD)).role(role).build());
 	}
 
 	private String admin() {

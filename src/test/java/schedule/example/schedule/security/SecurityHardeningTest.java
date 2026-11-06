@@ -55,9 +55,9 @@ class SecurityHardeningTest {
 
 	@BeforeEach
 	void createAccounts() {
-		adminUserRepository.save(AdminUser.builder()
+		adminUserRepository.save(AdminUser.builder().universityId(schedule.example.schedule.tenant.TenantContext.DEFAULT_UNIVERSITY_ID)
 			.email(ADMIN_EMAIL).passwordHash(passwordEncoder.encode(ADMIN_PASSWORD)).role(AdminRole.ADMIN).build());
-		adminUserRepository.save(AdminUser.builder()
+		adminUserRepository.save(AdminUser.builder().universityId(schedule.example.schedule.tenant.TenantContext.DEFAULT_UNIVERSITY_ID)
 			.email(DEMO_EMAIL).passwordHash(passwordEncoder.encode("unused-demo-password")).role(AdminRole.DEMO_ADMIN).build());
 	}
 

@@ -59,7 +59,7 @@ class SessionCookieTest {
 
 	@BeforeEach
 	void createUser() {
-		users.save(AdminUser.builder().email(EMAIL).passwordHash(passwordEncoder.encode(PASSWORD)).role(AdminRole.ADMIN).build());
+		users.save(AdminUser.builder().universityId(schedule.example.schedule.tenant.TenantContext.DEFAULT_UNIVERSITY_ID).email(EMAIL).passwordHash(passwordEncoder.encode(PASSWORD)).role(AdminRole.ADMIN).build());
 	}
 
 	@AfterEach
