@@ -9,6 +9,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import schedule.example.schedule.audit.AuditCategory;
+import schedule.example.schedule.audit.AuditEntry;
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.entity.Settings;
 import schedule.example.schedule.entity.enums.AdminRole;
@@ -35,6 +38,7 @@ public class DataInitializer implements ApplicationRunner {
 	private final PasswordEncoder passwordEncoder;
 	private final AdminUserDetailsService adminUserDetailsService;
 	private final ScheduleGroupSupport scheduleGroupSupport;
+	private final AuditService auditService;
 
 	public DataInitializer(
 		AdminUserRepository adminUserRepository,
@@ -43,7 +47,8 @@ public class DataInitializer implements ApplicationRunner {
 		DemoProperties demoProperties,
 		PasswordEncoder passwordEncoder,
 		AdminUserDetailsService adminUserDetailsService,
-		ScheduleGroupSupport scheduleGroupSupport
+		ScheduleGroupSupport scheduleGroupSupport,
+		AuditService auditService
 	) {
 		this.adminUserRepository = adminUserRepository;
 		this.settingsRepository = settingsRepository;
@@ -52,6 +57,7 @@ public class DataInitializer implements ApplicationRunner {
 		this.passwordEncoder = passwordEncoder;
 		this.adminUserDetailsService = adminUserDetailsService;
 		this.scheduleGroupSupport = scheduleGroupSupport;
+		this.auditService = auditService;
 	}
 
 	private static final int MIN_BOOTSTRAP_PASSWORD_LENGTH = 10;
@@ -113,6 +119,8 @@ public class DataInitializer implements ApplicationRunner {
 			admin.setMustChangePassword(false);
 			admin.setPasswordHash(passwordEncoder.encode(password));
 			adminUserRepository.saveAndFlush(admin);
+			auditService.recordAfterCommit(new AuditEntry("FIRST_ADMIN_CREATED", AuditCategory.USERS, "USER", null,
+				"First administrator created from the server settings", AuditEntry.Outcome.SUCCESS, email));
 			LOGGER.warn("[BOOTSTRAP] First administrator CREATED for '{}'. "
 				+ "You can now remove BOOTSTRAP_ADMIN_PASSWORD from the environment.", email);
 		} else if (bootstrapAdminProperties.resetPassword()) {
@@ -132,6 +140,8 @@ public class DataInitializer implements ApplicationRunner {
 			admin.setEnabled(true);
 			admin.setMustChangePassword(false);
 			adminUserRepository.saveAndFlush(admin);
+			auditService.recordAfterCommit(new AuditEntry("ADMIN_PASSWORD_RESET_BY_SERVER", AuditCategory.SECURITY, "USER", null,
+				"Password reset from the server settings (BOOTSTRAP_ADMIN_RESET_PASSWORD)", AuditEntry.Outcome.SUCCESS, email));
 			LOGGER.warn("[BOOTSTRAP] Password RESET for '{}' and all sessions revoked. "
 				+ "Remove BOOTSTRAP_ADMIN_RESET_PASSWORD now.", email);
 		}

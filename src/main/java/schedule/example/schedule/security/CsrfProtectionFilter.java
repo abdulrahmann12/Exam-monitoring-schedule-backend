@@ -15,6 +15,9 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import schedule.example.schedule.audit.AuditCategory;
+import schedule.example.schedule.audit.AuditEntry;
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.common.ApiErrorResponse;
 
@@ -46,10 +49,12 @@ public class CsrfProtectionFilter extends OncePerRequestFilter {
 
 	private final CorsConfigurationSource corsConfigurationSource;
 	private final ObjectMapper objectMapper;
+	private final AuditService auditService;
 
-	public CsrfProtectionFilter(CorsConfigurationSource corsConfigurationSource, ObjectMapper objectMapper) {
+	public CsrfProtectionFilter(CorsConfigurationSource corsConfigurationSource, ObjectMapper objectMapper, AuditService auditService) {
 		this.corsConfigurationSource = corsConfigurationSource;
 		this.objectMapper = objectMapper;
+		this.auditService = auditService;
 	}
 
 	@Override
@@ -61,6 +66,10 @@ public class CsrfProtectionFilter extends OncePerRequestFilter {
 		if (needsCheck(request) && !passes(request)) {
 			LOGGER.warn("[CSRF] Blocked {} {} origin={} ip={}", request.getMethod(), request.getRequestURI(),
 				request.getHeader(HttpHeaders.ORIGIN), request.getRemoteAddr());
+			String origin = request.getHeader(HttpHeaders.ORIGIN);
+			auditService.record(new AuditEntry("FORGED_REQUEST_BLOCKED", AuditCategory.SECURITY, null, null,
+				"Blocked a request that did not come from the app: " + request.getMethod() + " " + request.getRequestURI()
+					+ (origin != null ? " (from " + origin + ")" : ""), AuditEntry.Outcome.DENIED, null));
 			ApiErrorResponse error = new ApiErrorResponse(
 				Instant.now(),
 				HttpStatus.FORBIDDEN.value(),

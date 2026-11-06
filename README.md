@@ -59,6 +59,7 @@ The full annotated list is in [`.env.example`](.env.example).
 | `APP_FRONTEND_URL`               | ✅ prod | Frontend address used in invitation / reset links (never taken from request headers) |
 | `APP_INVITE_HOURS` / `APP_RESET_LINK_MINUTES` | — | Link lifetimes, default 72 h / 30 min |
 | `APP_LOG_ACCOUNT_LINKS`          | — | Local development only: print links in the log when email is off |
+| `APP_AUDIT_RETENTION_DAYS`       | — | Days the activity log is kept, default 365 (0 = forever) |
 
 The server refuses to start when a required value is missing and prints which one.
 

@@ -164,6 +164,14 @@ public class GlobalExceptionHandler {
 		return buildErrorResponse(HttpStatus.BAD_REQUEST, safeMessage(ex), request, rowErrors);
 	}
 
+	// ── 404 — unknown address ─────────────────────────────────────────────────
+
+	/** No endpoint at this address. Without this, Spring's signal fell through to the 500 handler. */
+	@ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+	public ResponseEntity<ApiErrorResponse> handleNoResource(Exception ex, HttpServletRequest request) {
+		return buildErrorResponse(HttpStatus.NOT_FOUND, "Not found.", request);
+	}
+
 	// ── 405 METHOD NOT ALLOWED ────────────────────────────────────────────────
 
 	/** Handles requests using an HTTP method not supported by the endpoint. */

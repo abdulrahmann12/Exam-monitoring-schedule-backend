@@ -21,6 +21,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.security.AdminUserDetailsService;
 import schedule.example.schedule.security.CsrfProtectionFilter;
 import schedule.example.schedule.security.DemoLoginRateLimiterFilter;
@@ -50,6 +51,7 @@ public class SecurityConfig {
 	private final AdminUserDetailsService adminUserDetailsService;
 	private final CorsProperties corsProperties;
 	private final ObjectMapper objectMapper;
+	private final AuditService auditService;
 
 	public SecurityConfig(
 		JwtAuthenticationFilter jwtAuthenticationFilter,
@@ -60,7 +62,8 @@ public class SecurityConfig {
 		RestAccessDeniedHandler restAccessDeniedHandler,
 		AdminUserDetailsService adminUserDetailsService,
 		CorsProperties corsProperties,
-		ObjectMapper objectMapper
+		ObjectMapper objectMapper,
+		AuditService auditService
 	) {
 		this.jwtAuthenticationFilter = jwtAuthenticationFilter;
 		this.loginRateLimiterFilter = loginRateLimiterFilter;
@@ -71,6 +74,7 @@ public class SecurityConfig {
 		this.adminUserDetailsService = adminUserDetailsService;
 		this.corsProperties = corsProperties;
 		this.objectMapper = objectMapper;
+		this.auditService = auditService;
 	}
 
 	@Bean
@@ -95,6 +99,8 @@ public class SecurityConfig {
 				.requestMatchers(HttpMethod.POST, "/api/auth/logout-all", "/api/auth/change-password").authenticated()
 				// User management: administrators only (also for reading — it lists emails).
 				.requestMatchers("/api/users", "/api/users/**").hasRole(ADMIN)
+				// Activity log: administrators only (it shows emails and IP addresses).
+				.requestMatchers("/api/audit-events", "/api/audit-events/**").hasRole(ADMIN)
 				// System settings: everyone reads (branding), only administrators change.
 				.requestMatchers(HttpMethod.PUT, "/api/settings").hasRole(ADMIN)
 				// Reading schedules, people, rooms, … : every signed-in role.
@@ -106,7 +112,7 @@ public class SecurityConfig {
 				.anyRequest().hasAnyRole(ADMIN, SCHEDULER, DEMO))
 			.authenticationProvider(authenticationProvider)
 			// Anti-forgery check first: requests forged by another website never reach anything else.
-			.addFilterBefore(new CsrfProtectionFilter(corsConfigurationSource(), objectMapper), UsernamePasswordAuthenticationFilter.class)
+			.addFilterBefore(new CsrfProtectionFilter(corsConfigurationSource(), objectMapper, auditService), UsernamePasswordAuthenticationFilter.class)
 			// Rate limiter runs before JWT filter to reject brute-force before token parsing
 			.addFilterBefore(loginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)
 			.addFilterBefore(demoLoginRateLimiterFilter, UsernamePasswordAuthenticationFilter.class)

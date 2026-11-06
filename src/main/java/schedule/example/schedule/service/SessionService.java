@@ -8,6 +8,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import schedule.example.schedule.audit.AuditCategory;
+import schedule.example.schedule.audit.AuditEntry;
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.entity.UserSession;
@@ -22,6 +25,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -45,6 +49,7 @@ public class SessionService {
 	private final UserSessionRepository sessions;
 	private final AdminUserRepository users;
 	private final AuthCookieProperties properties;
+	private final AuditService auditService;
 
 	public record Started(UserSession session, String refreshToken) {
 	}
@@ -115,6 +120,9 @@ public class SessionService {
 			sessions.save(session);
 			LOGGER.warn("[AUTH] Reused refresh token for session {} (user {}) — possible theft; session ended.",
 				session.getId(), session.getUserId());
+			String email = users.findById(session.getUserId()).map(AdminUser::getEmail).orElse(null);
+			auditService.record(new AuditEntry("SESSION_TOKEN_REUSED", AuditCategory.SECURITY, "USER", session.getUserId().toString(),
+				"An old session token was used again (possible theft) — that session was ended", AuditEntry.Outcome.DENIED, email));
 		});
 	}
 
@@ -133,20 +141,25 @@ public class SessionService {
 			.isPresent();
 	}
 
-	/** Logout on this device: ends the session the refresh token belongs to (current or just-rotated). */
+	/**
+	 * Logout on this device: ends the session the refresh token belongs to (current or just-rotated).
+	 *
+	 * @return the user whose session was ended, if there was an open one
+	 */
 	@Transactional
-	public void revokeByRefreshToken(String refreshToken) {
+	public Optional<UUID> revokeByRefreshToken(String refreshToken) {
 		if (refreshToken == null || refreshToken.isBlank()) {
-			return;
+			return Optional.empty();
 		}
 		String hash = hash(refreshToken);
 		Instant now = Instant.now();
-		sessions.findByRefreshTokenHash(hash)
+		return sessions.findByRefreshTokenHash(hash)
 			.or(() -> sessions.findFirstByPreviousTokenHash(hash))
 			.filter(session -> session.getRevokedAt() == null)
-			.ifPresent(session -> {
+			.map(session -> {
 				session.setRevokedAt(now);
 				sessions.save(session);
+				return session.getUserId();
 			});
 	}
 

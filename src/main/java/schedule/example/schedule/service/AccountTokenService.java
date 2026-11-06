@@ -9,6 +9,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import schedule.example.schedule.config.AccountLinkProperties;
+import schedule.example.schedule.audit.AuditCategory;
+import schedule.example.schedule.audit.AuditEntry;
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.entity.AccountToken;
 import schedule.example.schedule.entity.AdminUser;
@@ -45,6 +48,7 @@ public class AccountTokenService {
 	private final AccountLinkProperties properties;
 	private final PasswordEncoder passwordEncoder;
 	private final SessionService sessionService;
+	private final AuditService auditService;
 
 	public record Issued(String link, Instant expiresAt) {
 	}
@@ -96,6 +100,11 @@ public class AccountTokenService {
 		tokens.retireAllUnused(user.getId(), now);
 		sessionService.revokeAllForUser(user.getId());
 		LOGGER.info("[AUTH] Password set from a {} link for '{}'; all sessions signed out.", token.getPurpose(), user.getEmail());
+		boolean invite = token.getPurpose() == AccountTokenPurpose.INVITE;
+		auditService.recordAfterCommit(new AuditEntry(invite ? "INVITATION_ACCEPTED" : "PASSWORD_RESET_COMPLETED", AuditCategory.AUTH,
+			"USER", user.getId().toString(),
+			invite ? "Accepted the invitation and chose a password" : "Set a new password with a reset link (all devices signed out)",
+			AuditEntry.Outcome.SUCCESS, user.getEmail()));
 	}
 
 	@Transactional(readOnly = true)

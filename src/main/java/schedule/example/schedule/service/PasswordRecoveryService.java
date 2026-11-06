@@ -4,6 +4,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import schedule.example.schedule.audit.AuditCategory;
+import schedule.example.schedule.audit.AuditEntry;
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.entity.enums.AccountTokenPurpose;
@@ -31,13 +34,16 @@ public class PasswordRecoveryService {
 	private final AdminUserRepository users;
 	private final AccountTokenService accountTokenService;
 	private final AccountEmailService accountEmailService;
+	private final AuditService auditService;
 	private final SlidingWindowRateLimiter perIp = new SlidingWindowRateLimiter(5, Duration.ofMinutes(15));
 	private final SlidingWindowRateLimiter perEmail = new SlidingWindowRateLimiter(3, Duration.ofHours(1));
 
-	public PasswordRecoveryService(AdminUserRepository users, AccountTokenService accountTokenService, AccountEmailService accountEmailService) {
+	public PasswordRecoveryService(AdminUserRepository users, AccountTokenService accountTokenService,
+		AccountEmailService accountEmailService, AuditService auditService) {
 		this.users = users;
 		this.accountTokenService = accountTokenService;
 		this.accountEmailService = accountEmailService;
+		this.auditService = auditService;
 	}
 
 	public void requestReset(String email, String clientIp) {
@@ -51,9 +57,13 @@ public class PasswordRecoveryService {
 		}
 		if (!perEmail.tryAcquire(normalized)) {
 			LOGGER.warn("[AUTH] Password reset emails for '{}' are being requested too often — ignored.", normalized);
+			auditService.record(new AuditEntry("PASSWORD_RESET_THROTTLED", AuditCategory.SECURITY, "USER", user.getId().toString(),
+				"Too many password reset requests — ignored", AuditEntry.Outcome.DENIED, user.getEmail()));
 			return;
 		}
 		AccountTokenService.Issued link = accountTokenService.issue(user, AccountTokenPurpose.PASSWORD_RESET);
 		accountEmailService.sendPasswordReset(user, link);
+		auditService.record(new AuditEntry("PASSWORD_RESET_REQUESTED", AuditCategory.AUTH, "USER", user.getId().toString(),
+			"Asked for a password reset link", AuditEntry.Outcome.SUCCESS, user.getEmail()));
 	}
 }

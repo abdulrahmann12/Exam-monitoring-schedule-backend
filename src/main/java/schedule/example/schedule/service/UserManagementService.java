@@ -11,6 +11,9 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.validation.annotation.Validated;
 
+import schedule.example.schedule.audit.AuditCategory;
+import schedule.example.schedule.audit.AuditEntry;
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.config.Messages;
 import schedule.example.schedule.dto.user.CreateUserRequest;
 import schedule.example.schedule.dto.user.InviteResponse;
@@ -58,6 +61,7 @@ public class UserManagementService {
 	private final SessionService sessionService;
 	private final AccountTokenService accountTokenService;
 	private final AccountEmailService accountEmailService;
+	private final AuditService auditService;
 
 	@Transactional(readOnly = true)
 	public List<UserResponse> list() {
@@ -97,6 +101,8 @@ public class UserManagementService {
 		AdminUser saved = adminUserRepository.saveAndFlush(user);
 		LOGGER.warn("[USERS] '{}' created user '{}' with role {} ({}).", actorEmail(actorId), email, request.role(),
 			request.invite() ? "invitation" : "temporary password");
+		audit("USER_CREATED", saved, "Added user " + email + " as " + roleName(request.role())
+			+ (request.invite() ? " (invitation)" : " (temporary password)"));
 		return request.invite() ? sendInvitation(saved, actorId) : new InviteResponse(toResponse(saved), null, null, false);
 	}
 
@@ -113,6 +119,7 @@ public class UserManagementService {
 		adminUserRepository.save(user);
 		sessionService.revokeAllForUser(user.getId());
 		LOGGER.warn("[USERS] '{}' sent a new invitation to '{}'.", actorEmail(actorId), user.getEmail());
+		audit("USER_INVITED", user, "Sent a new invitation to " + user.getEmail());
 		return sendInvitation(user, actorId);
 	}
 
@@ -164,6 +171,17 @@ public class UserManagementService {
 			throw new BusinessRuleViolationException(Messages.USER_LAST_ADMIN);
 		}
 
+		List<String> changes = new java.util.ArrayList<>();
+		if (roleChanged) {
+			changes.add("role " + roleName(user.getRole()) + " → " + roleName(request.role()));
+		}
+		if (user.isEnabled() != enabled) {
+			changes.add(enabled ? "enabled" : "disabled");
+		}
+		if (!java.util.Objects.equals(user.getDisplayName(), cleanName(request.displayName()))) {
+			changes.add("name '" + nameOrDash(user.getDisplayName()) + "' → '" + nameOrDash(cleanName(request.displayName())) + "'");
+		}
+
 		user.setDisplayName(cleanName(request.displayName()));
 		user.setRole(request.role());
 		user.setEnabled(enabled);
@@ -177,6 +195,9 @@ public class UserManagementService {
 		}
 		LOGGER.warn("[USERS] '{}' updated user '{}': role={}, enabled={}.",
 			actorEmail(actorId), user.getEmail(), user.getRole(), user.isEnabled());
+		if (!changes.isEmpty()) {
+			audit(disabling ? "USER_DISABLED" : "USER_UPDATED", user, "Changed user " + user.getEmail() + ": " + String.join(", ", changes));
+		}
 		return toResponse(saved);
 	}
 
@@ -185,6 +206,7 @@ public class UserManagementService {
 		AdminUser user = requireManageable(id);
 		loginAttemptService.unlock(user);
 		LOGGER.warn("[USERS] '{}' unlocked user '{}'.", actorEmail(actorId), user.getEmail());
+		audit("USER_UNLOCKED", user, "Unlocked " + user.getEmail());
 		return toResponse(user);
 	}
 
@@ -203,6 +225,7 @@ public class UserManagementService {
 		AdminUser saved = adminUserRepository.save(user);
 		sessionService.revokeAllForUser(user.getId());
 		LOGGER.warn("[USERS] '{}' reset the password of '{}'.", actorEmail(actorId), user.getEmail());
+		audit("USER_PASSWORD_RESET", user, "Set a temporary password for " + user.getEmail() + " (signed out everywhere)");
 		return toResponse(saved);
 	}
 
@@ -220,6 +243,25 @@ public class UserManagementService {
 		accountTokenService.deleteAllForUser(user.getId());
 		adminUserRepository.delete(user);
 		LOGGER.warn("[USERS] '{}' deleted user '{}'.", actorEmail(actorId), user.getEmail());
+		audit("USER_DELETED", user, "Deleted user " + user.getEmail() + " (" + roleName(user.getRole()) + ")");
+	}
+
+	/** Recorded only if the change is really saved. */
+	private void audit(String action, AdminUser user, String summary) {
+		auditService.recordAfterCommit(AuditEntry.success(action, AuditCategory.USERS, "USER", user.getId(), summary));
+	}
+
+	private static String roleName(AdminRole role) {
+		return switch (role) {
+			case ADMIN -> "Administrator";
+			case SCHEDULER -> "Scheduler";
+			case VIEWER -> "Viewer";
+			case DEMO_ADMIN -> "Demo";
+		};
+	}
+
+	private static String nameOrDash(String name) {
+		return name == null ? "-" : name;
 	}
 
 	private AdminUser requireManageable(UUID id) {

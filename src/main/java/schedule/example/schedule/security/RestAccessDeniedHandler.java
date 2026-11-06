@@ -12,6 +12,9 @@ import org.springframework.stereotype.Component;
 
 import schedule.example.schedule.dto.common.ApiErrorResponse;
 
+import schedule.example.schedule.audit.AuditCategory;
+import schedule.example.schedule.audit.AuditEntry;
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.config.Messages;
 
 import java.io.IOException;
@@ -22,14 +25,19 @@ import java.util.List;
 public class RestAccessDeniedHandler implements AccessDeniedHandler {
 
 	private final ObjectMapper objectMapper;
+	private final AuditService auditService;
 
-	public RestAccessDeniedHandler(ObjectMapper objectMapper) {
+	public RestAccessDeniedHandler(ObjectMapper objectMapper, AuditService auditService) {
 		this.objectMapper = objectMapper;
+		this.auditService = auditService;
 	}
 
 	@Override
 	public void handle(HttpServletRequest request, HttpServletResponse response, AccessDeniedException accessDeniedException)
 		throws IOException, ServletException {
+		// The UI hides what a role may not do, so a refusal here is worth a look.
+		auditService.record(new AuditEntry("ACCESS_DENIED", AuditCategory.SECURITY, null, null,
+			"Access denied: " + request.getMethod() + " " + request.getRequestURI(), AuditEntry.Outcome.DENIED, null));
 		ApiErrorResponse error = new ApiErrorResponse(
 			Instant.now(),
 			HttpStatus.FORBIDDEN.value(),

@@ -15,7 +15,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
+import schedule.example.schedule.audit.AuditCategory;
+import schedule.example.schedule.audit.AuditEntry;
+import schedule.example.schedule.audit.AuditService;
 import schedule.example.schedule.config.Messages;
+import schedule.example.schedule.exception.AccountLockedException;
 import schedule.example.schedule.dto.auth.ChangePasswordRequest;
 import schedule.example.schedule.dto.auth.LoginRequest;
 import schedule.example.schedule.entity.AdminUser;
@@ -41,6 +45,7 @@ public class AuthService {
 	private final PasswordEncoder passwordEncoder;
 	private final LoginAttemptService loginAttemptService;
 	private final SessionService sessionService;
+	private final AuditService auditService;
 
 	/** Everything the controller needs to set the two cookies. */
 	public record SignedIn(String email, String accessToken, Instant accessExpiresAt, String refreshToken, Instant sessionExpiresAt) {
@@ -52,21 +57,35 @@ public class AuthService {
 	public SignedIn login(@Valid LoginRequest request, HttpServletRequest httpRequest) {
 		// A locked account is refused before the password is even checked.
 		var account = adminUserRepository.findByEmailIgnoreCase(request.email());
-		account.ifPresent(loginAttemptService::rejectIfLocked);
+		try {
+			account.ifPresent(loginAttemptService::rejectIfLocked);
+		} catch (AccountLockedException locked) {
+			auditService.record(authEvent("LOGIN_REFUSED_LOCKED", AuditCategory.SECURITY, "Sign-in refused: account is locked")
+				.withOutcome(AuditEntry.Outcome.DENIED).forAccount(request.email()));
+			throw locked;
+		}
 		try {
 			Authentication authentication = authenticationManager.authenticate(
 				new UsernamePasswordAuthenticationToken(request.email(), request.password())
 			);
 			AdminUser admin = requireAdmin(authentication.getName());
 			loginAttemptService.recordSuccess(admin.getId());
-			return openSession(admin, httpRequest);
+			SignedIn signedIn = openSession(admin, httpRequest);
+			auditService.record(authEvent("LOGIN_SUCCEEDED", AuditCategory.AUTH, "Signed in").forAccount(admin.getEmail()));
+			return signedIn;
 		} catch (AuthenticationException ex) {
 			if (ex instanceof DisabledException disabled && account.isPresent()) {
 				rejectDisabled(account.get(), request.password(), disabled);
 			}
+			auditService.record(authEvent("LOGIN_FAILED", AuditCategory.AUTH,
+					account.isPresent() ? "Failed sign-in (wrong password)" : "Failed sign-in (no account with this email)")
+				.withOutcome(AuditEntry.Outcome.FAILURE).forAccount(request.email()));
 			if (account.isPresent()) {
 				Instant lockedUntil = loginAttemptService.recordFailure(account.get().getId());
 				if (lockedUntil != null) {
+					auditService.record(authEvent("ACCOUNT_LOCKED", AuditCategory.SECURITY,
+							"Account locked after too many wrong passwords (until " + lockedUntil + ")")
+						.withOutcome(AuditEntry.Outcome.DENIED).forAccount(account.get().getEmail()));
 					throw loginAttemptService.lockedException(lockedUntil); // tell the user right away
 				}
 			}
@@ -84,6 +103,8 @@ public class AuthService {
 			&& !PasswordPolicy.exceedsMaximum(rawPassword)
 			&& passwordEncoder.matches(rawPassword, account.getPasswordHash());
 		if (passwordCorrect) {
+			auditService.record(authEvent("LOGIN_REFUSED_DISABLED", AuditCategory.SECURITY, "Sign-in refused: account is disabled")
+				.withOutcome(AuditEntry.Outcome.DENIED).forAccount(account.getEmail()));
 			throw new DisabledException(Messages.AUTH_ACCOUNT_DISABLED, ex);
 		}
 	}
@@ -105,7 +126,9 @@ public class AuthService {
 
 	/** Logout on this device only. Safe to call with a missing or already-ended token. */
 	public void logout(String refreshToken) {
-		sessionService.revokeByRefreshToken(refreshToken);
+		sessionService.revokeByRefreshToken(refreshToken)
+			.flatMap(adminUserRepository::findById)
+			.ifPresent(user -> auditService.record(authEvent("LOGGED_OUT", AuditCategory.AUTH, "Signed out").forAccount(user.getEmail())));
 	}
 
 	/**
@@ -122,6 +145,7 @@ public class AuthService {
 		adminUserRepository.save(admin);
 		sessionService.revokeAllForUser(admin.getId());
 		LOGGER.info("[AUTH] Signed out everywhere: '{}'.", admin.getEmail());
+		auditService.recordAfterCommit(authEvent("SIGNED_OUT_EVERYWHERE", AuditCategory.AUTH, "Signed out on all devices"));
 	}
 
 	/**
@@ -144,7 +168,12 @@ public class AuthService {
 		adminUserRepository.save(admin);
 		sessionService.keepOnly(admin.getId(), currentSessionId, admin.getTokenVersion());
 		LOGGER.info("[AUTH] Password changed — all other sessions revoked for '{}'.", admin.getEmail());
+		auditService.recordAfterCommit(authEvent("PASSWORD_CHANGED", AuditCategory.AUTH, "Changed own password (other devices signed out)"));
 		return accessToken(admin, currentSessionId);
+	}
+
+	private static AuditEntry authEvent(String action, AuditCategory category, String summary) {
+		return new AuditEntry(action, category, "USER", null, summary, AuditEntry.Outcome.SUCCESS, null);
 	}
 
 	private AccessToken accessToken(AdminUser user, UUID sessionId) {
