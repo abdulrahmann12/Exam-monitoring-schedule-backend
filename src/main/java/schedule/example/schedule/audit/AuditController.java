@@ -51,7 +51,7 @@ public class AuditController {
 		String outcome,
 		String ipAddress
 	) {
-		static AuditEventResponse of(AuditEvent e) {
+		public static AuditEventResponse of(AuditEvent e) {
 			return new AuditEventResponse(e.getId(), e.getOccurredAt(), e.getActorEmail(), e.getAction(), e.getCategory(),
 				e.getTargetType(), e.getTargetId(), e.getSummary(), e.getOutcome(), e.getIpAddress());
 		}

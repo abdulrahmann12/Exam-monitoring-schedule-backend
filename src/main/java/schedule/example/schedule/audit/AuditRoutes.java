@@ -86,6 +86,7 @@ public final class AuditRoutes {
 	private static final List<String> NOT_RECORDED_HERE = List.of(
 		"/api/auth/",
 		"/api/users",
+		"/api/owner/",
 		"/api/assignments/generate-preview"
 	);
 

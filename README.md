@@ -47,6 +47,8 @@ The full annotated list is in [`.env.example`](.env.example).
 | `CORS_ALLOWED_ORIGINS`           | ✅ in prod | Exact frontend origin(s), comma-separated — no wildcards |
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | first start | Creates the first admin when none exists. Never overwrites an existing password |
 | `BOOTSTRAP_ADMIN_RESET_PASSWORD` | — | `true` for one restart to reset that admin's password (recovery) |
+| `BOOTSTRAP_OWNER_EMAIL` / `BOOTSTRAP_OWNER_PASSWORD` | — | Optional. Creates the platform owner (owner panel at `/owner`: create universities, switch them off/on, usage). Belongs to no university and sees no university data. Must be an email no university account uses |
+| `BOOTSTRAP_OWNER_RESET_PASSWORD` | — | `true` for one restart to reset the owner's password (recovery) |
 | `JWT_EXPIRATION_MINUTES`         | — | Access token lifetime, default 15 (renewed silently from the refresh cookie) |
 | `AUTH_COOKIE_SAME_SITE`          | — | `Lax` (default) when frontend and API share a site; `None` for different sites (HTTPS only) |
 | `AUTH_COOKIE_SECURE`             | — | `true` (default); `false` only for plain-http local development |

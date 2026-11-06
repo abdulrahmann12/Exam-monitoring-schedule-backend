@@ -259,6 +259,7 @@ public class UserManagementService {
 			case SCHEDULER -> "Scheduler";
 			case VIEWER -> "Viewer";
 			case DEMO_ADMIN -> "Demo";
+			case SUPER_ADMIN -> "Platform owner";
 		};
 	}
 

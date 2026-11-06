@@ -16,7 +16,6 @@ import schedule.example.schedule.entity.AdminUser;
 import schedule.example.schedule.entity.UserSession;
 import schedule.example.schedule.entity.enums.AdminRole;
 import schedule.example.schedule.exception.InvalidTokenException;
-import schedule.example.schedule.entity.University;
 import schedule.example.schedule.repository.AdminUserRepository;
 import schedule.example.schedule.repository.UniversityRepository;
 import schedule.example.schedule.repository.UserSessionRepository;
@@ -97,8 +96,8 @@ public class SessionService {
 			throw new InvalidTokenException(Messages.AUTH_SESSION_ENDED);
 		}
 		AdminUser user = users.findById(session.getUserId()).orElse(null);
-		boolean universityActive = user != null && (user.getUniversityId() == null
-			|| universities.findById(user.getUniversityId()).map(University::isActive).orElse(false));
+		boolean universityActive = user != null
+			&& schedule.example.schedule.security.AdminUserDetailsService.universityActive(user, universities);
 		if (user == null || !user.isEnabled() || !universityActive || user.getTokenVersion() != session.getTokenVersion()) {
 			// Account gone/disabled, or "sign out everywhere" / password change since this session began.
 			session.setRevokedAt(now);

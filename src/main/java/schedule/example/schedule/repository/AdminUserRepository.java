@@ -21,8 +21,20 @@ public interface AdminUserRepository extends JpaRepository<AdminUser, UUID> {
 
 	/** Upgrade helper: accounts created before universities existed join the given university. */
 	@Modifying
-	@Query("UPDATE AdminUser a SET a.universityId = :universityId WHERE a.universityId IS NULL")
+	// The platform owner never belongs to a university, so it is never adopted.
+	@Query("UPDATE AdminUser a SET a.universityId = :universityId WHERE a.universityId IS NULL "
+		+ "AND a.role <> schedule.example.schedule.entity.enums.AdminRole.SUPER_ADMIN")
 	int assignUniversityWhereMissing(UUID universityId);
+
+	List<AdminUser> findByUniversityId(UUID universityId);
+
+	/** Owner panel: per university, the number of accounts (without demo/owner) and the latest sign-in. */
+	@Query("SELECT a.universityId, COUNT(a), MAX(a.lastLoginAt) FROM AdminUser a WHERE a.universityId IS NOT NULL "
+		+ "AND a.role <> schedule.example.schedule.entity.enums.AdminRole.DEMO_ADMIN "
+		+ "AND a.role <> schedule.example.schedule.entity.enums.AdminRole.SUPER_ADMIN GROUP BY a.universityId")
+	List<Object[]> accountUsageByUniversity();
+
+	List<AdminUser> findByUniversityIdAndRoleOrderByEmailAsc(UUID universityId, AdminRole role);
 
 	/** One university's accounts except the given role (hides the demo account), sorted by email. */
 	List<AdminUser> findByUniversityIdAndRoleNotOrderByEmailAsc(UUID universityId, AdminRole role);

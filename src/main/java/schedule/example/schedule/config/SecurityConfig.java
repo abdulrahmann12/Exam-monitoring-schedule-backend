@@ -41,6 +41,8 @@ public class SecurityConfig {
 	private static final String ADMIN = "ADMIN";
 	private static final String SCHEDULER = "SCHEDULER";
 	private static final String DEMO = "DEMO_ADMIN";
+	private static final String VIEWER = "VIEWER";
+	private static final String OWNER = "SUPER_ADMIN";
 
 	private final JwtAuthenticationFilter jwtAuthenticationFilter;
 	private final LoginRateLimiterFilter loginRateLimiterFilter;
@@ -97,14 +99,17 @@ public class SecurityConfig {
 				// Own session: every signed-in user.
 				.requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
 				.requestMatchers(HttpMethod.POST, "/api/auth/logout-all", "/api/auth/change-password").authenticated()
+				// Owner panel: the platform owner only.
+				.requestMatchers("/api/owner", "/api/owner/**").hasRole(OWNER)
 				// User management: administrators only (also for reading — it lists emails).
 				.requestMatchers("/api/users", "/api/users/**").hasRole(ADMIN)
 				// Activity log: administrators only (it shows emails and IP addresses).
 				.requestMatchers("/api/audit-events", "/api/audit-events/**").hasRole(ADMIN)
 				// System settings: everyone reads (branding), only administrators change.
 				.requestMatchers(HttpMethod.PUT, "/api/settings").hasRole(ADMIN)
-				// Reading schedules, people, rooms, … : every signed-in role.
-				.requestMatchers(HttpMethod.GET, "/**").authenticated()
+				// Reading schedules, people, rooms, … : every university role. Not the platform owner:
+				// it belongs to no university and never sees university data.
+				.requestMatchers(HttpMethod.GET, "/**").hasAnyRole(ADMIN, SCHEDULER, VIEWER, DEMO)
 				// Auto-assign preview writes nothing; the demo may try it, viewers have no use for it.
 				.requestMatchers(HttpMethod.POST, "/api/assignments/generate-preview").hasAnyRole(ADMIN, SCHEDULER, DEMO)
 				// Every other change. DEMO is listed so DemoReadOnlyFilter (which runs earlier)

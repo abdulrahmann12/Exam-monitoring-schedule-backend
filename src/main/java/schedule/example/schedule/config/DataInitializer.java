@@ -37,6 +37,7 @@ public class DataInitializer implements ApplicationRunner {
 	private final AdminUserRepository adminUserRepository;
 	private final SettingsRepository settingsRepository;
 	private final BootstrapAdminProperties bootstrapAdminProperties;
+	private final BootstrapOwnerProperties bootstrapOwnerProperties;
 	private final DemoProperties demoProperties;
 	private final PasswordEncoder passwordEncoder;
 	private final AdminUserDetailsService adminUserDetailsService;
@@ -49,6 +50,7 @@ public class DataInitializer implements ApplicationRunner {
 		AdminUserRepository adminUserRepository,
 		SettingsRepository settingsRepository,
 		BootstrapAdminProperties bootstrapAdminProperties,
+		BootstrapOwnerProperties bootstrapOwnerProperties,
 		DemoProperties demoProperties,
 		PasswordEncoder passwordEncoder,
 		AdminUserDetailsService adminUserDetailsService,
@@ -60,6 +62,7 @@ public class DataInitializer implements ApplicationRunner {
 		this.adminUserRepository = adminUserRepository;
 		this.settingsRepository = settingsRepository;
 		this.bootstrapAdminProperties = bootstrapAdminProperties;
+		this.bootstrapOwnerProperties = bootstrapOwnerProperties;
 		this.demoProperties = demoProperties;
 		this.passwordEncoder = passwordEncoder;
 		this.adminUserDetailsService = adminUserDetailsService;
@@ -91,6 +94,7 @@ public class DataInitializer implements ApplicationRunner {
 				LOGGER.warn("[UNIVERSITY] {} account(s) without a university were assigned to the first university.", adopted);
 			}
 			bootstrapAdministrator();
+			bootstrapOwner();
 			if (demoProperties.enabled()) {
 				seedDemoAccount();
 			} else {
@@ -123,7 +127,7 @@ public class DataInitializer implements ApplicationRunner {
 					"No administrator account exists. Set BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD "
 						+ "(at least " + MIN_BOOTSTRAP_PASSWORD_LENGTH + " characters) to create the first one.");
 			}
-			requireStrongPassword(password);
+			requireStrongPassword(password, "BOOTSTRAP_ADMIN_PASSWORD");
 			AdminUser admin = adminUserRepository.findByEmailIgnoreCase(email).orElseGet(AdminUser::new);
 			admin.setEmail(email);
 			admin.setRole(AdminRole.ADMIN);
@@ -141,7 +145,7 @@ public class DataInitializer implements ApplicationRunner {
 				throw new BeanCreationException(
 					"BOOTSTRAP_ADMIN_RESET_PASSWORD=true requires BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD.");
 			}
-			requireStrongPassword(password);
+			requireStrongPassword(password, "BOOTSTRAP_ADMIN_PASSWORD");
 			AdminUser admin = adminUserRepository.findByEmailIgnoreCase(email)
 				.orElseThrow(() -> new BeanCreationException("Cannot reset password: no account '" + email + "'."));
 			admin.setPasswordHash(passwordEncoder.encode(password));
@@ -165,14 +169,74 @@ public class DataInitializer implements ApplicationRunner {
 		}
 	}
 
-	private static void requireStrongPassword(String password) {
+	private static void requireStrongPassword(String password, String variable) {
 		if (password.length() < MIN_BOOTSTRAP_PASSWORD_LENGTH) {
 			throw new BeanCreationException(
-				"BOOTSTRAP_ADMIN_PASSWORD must be at least " + MIN_BOOTSTRAP_PASSWORD_LENGTH + " characters.");
+				variable + " must be at least " + MIN_BOOTSTRAP_PASSWORD_LENGTH + " characters.");
 		}
 		if (PasswordPolicy.exceedsMaximum(password)) {
 			throw new BeanCreationException(
-				"BOOTSTRAP_ADMIN_PASSWORD must be at most " + PasswordPolicy.MAX_BYTES + " bytes.");
+				variable + " must be at most " + PasswordPolicy.MAX_BYTES + " bytes.");
+		}
+	}
+
+	/**
+	 * Creates the platform owner (super-admin) from {@code BOOTSTRAP_OWNER_EMAIL}/{@code BOOTSTRAP_OWNER_PASSWORD}.
+	 *
+	 * <ul>
+	 *   <li>Optional: without both variables no owner is created (the app works without an owner panel).</li>
+	 *   <li>Only when no owner exists yet. Restarts never overwrite the owner's password.</li>
+	 *   <li>The email must not belong to a university account: turning a university user into the
+	 *       owner silently would hand them every university. Start-up stops with a clear message instead.</li>
+	 *   <li>{@code BOOTSTRAP_OWNER_RESET_PASSWORD=true} → recovery for one restart (password reset, sessions ended).</li>
+	 * </ul>
+	 */
+	private void bootstrapOwner() {
+		String email = normalize(bootstrapOwnerProperties.email());
+		String password = bootstrapOwnerProperties.password();
+		boolean configured = email != null && password != null && !password.isBlank();
+
+		if (!adminUserRepository.existsByRole(AdminRole.SUPER_ADMIN)) {
+			if (!configured) {
+				LOGGER.info("[BOOTSTRAP] No platform owner configured (BOOTSTRAP_OWNER_EMAIL / BOOTSTRAP_OWNER_PASSWORD); owner panel unused.");
+				return;
+			}
+			requireStrongPassword(password, "BOOTSTRAP_OWNER_PASSWORD");
+			if (adminUserRepository.findByEmailIgnoreCase(email).isPresent()) {
+				throw new BeanCreationException("BOOTSTRAP_OWNER_EMAIL '" + email + "' already belongs to a university account. "
+					+ "Use a separate email for the platform owner.");
+			}
+			AdminUser owner = new AdminUser();
+			owner.setEmail(email);
+			owner.setDisplayName("Platform owner");
+			owner.setRole(AdminRole.SUPER_ADMIN);
+			owner.setEnabled(true);
+			owner.setMustChangePassword(false);
+			owner.setUniversityId(null);
+			owner.setPasswordHash(passwordEncoder.encode(password));
+			adminUserRepository.saveAndFlush(owner);
+			auditService.recordAfterCommit(new AuditEntry("OWNER_CREATED", AuditCategory.PLATFORM, "USER", null,
+				"Platform owner created from the server settings", AuditEntry.Outcome.SUCCESS, email));
+			LOGGER.warn("[BOOTSTRAP] Platform owner CREATED for '{}'. You can now remove BOOTSTRAP_OWNER_PASSWORD.", email);
+		} else if (bootstrapOwnerProperties.resetPassword()) {
+			if (!configured) {
+				throw new BeanCreationException(
+					"BOOTSTRAP_OWNER_RESET_PASSWORD=true requires BOOTSTRAP_OWNER_EMAIL and BOOTSTRAP_OWNER_PASSWORD.");
+			}
+			requireStrongPassword(password, "BOOTSTRAP_OWNER_PASSWORD");
+			AdminUser owner = adminUserRepository.findByEmailIgnoreCase(email)
+				.filter(found -> found.getRole() == AdminRole.SUPER_ADMIN)
+				.orElseThrow(() -> new BeanCreationException("Cannot reset password: '" + email + "' is not the platform owner."));
+			owner.setPasswordHash(passwordEncoder.encode(password));
+			owner.setTokenVersion(owner.getTokenVersion() + 1);
+			owner.setFailedLoginAttempts(0);
+			owner.setLockedUntil(null);
+			owner.setEnabled(true);
+			owner.setMustChangePassword(false);
+			adminUserRepository.saveAndFlush(owner);
+			auditService.recordAfterCommit(new AuditEntry("OWNER_PASSWORD_RESET_BY_SERVER", AuditCategory.SECURITY, "USER", null,
+				"Platform owner password reset from the server settings (BOOTSTRAP_OWNER_RESET_PASSWORD)", AuditEntry.Outcome.SUCCESS, email));
+			LOGGER.warn("[BOOTSTRAP] Platform owner password RESET for '{}'. Remove BOOTSTRAP_OWNER_RESET_PASSWORD now.", email);
 		}
 	}
 

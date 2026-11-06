@@ -33,10 +33,20 @@ public class AdminUserDetailsService implements UserDetailsService {
 		this.universityRepository = universityRepository;
 	}
 
-	/** True when the user's university exists and is active (users without a university: platform owner). */
+	/**
+	 * True when the user's university exists and is active. Only the platform owner may have no
+	 * university; any other account without one is refused (fail closed).
+	 */
 	public boolean universityActive(AdminUser user) {
-		return user.getUniversityId() == null
-			|| universityRepository.findById(user.getUniversityId()).map(University::isActive).orElse(false);
+		return universityActive(user, universityRepository);
+	}
+
+	public static boolean universityActive(AdminUser user, UniversityRepository universityRepository) {
+		if (user.getUniversityId() == null) {
+			return user.getRole() == schedule.example.schedule.entity.enums.AdminRole.SUPER_ADMIN;
+		}
+		return user.getRole() != schedule.example.schedule.entity.enums.AdminRole.SUPER_ADMIN
+			&& universityRepository.findById(user.getUniversityId()).map(University::isActive).orElse(false);
 	}
 
 	/**

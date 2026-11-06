@@ -12,6 +12,8 @@ public enum AuditCategory {
 	TIME_SLOTS,
 	SCHEDULES,
 	SETTINGS,
+	/** Platform owner: universities created, switched off or on, first administrators. */
+	PLATFORM,
 	/** Anything else that changed data (a new endpoint without its own label yet). */
 	OTHER
 }

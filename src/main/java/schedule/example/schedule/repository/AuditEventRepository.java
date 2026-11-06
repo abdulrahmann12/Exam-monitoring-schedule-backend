@@ -16,4 +16,11 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID>, J
 	@Modifying
 	@Query("DELETE FROM AuditEvent e WHERE e.occurredAt < :cutoff")
 	int deleteOlderThan(Instant cutoff);
+
+	/** Owner panel: latest logged activity per university. */
+	@Query("SELECT e.universityId, MAX(e.occurredAt) FROM AuditEvent e WHERE e.universityId IS NOT NULL GROUP BY e.universityId")
+	java.util.List<Object[]> lastActivityByUniversity();
+
+	/** Platform-level entries (owner actions, sign-ins of accounts without a university). */
+	org.springframework.data.domain.Page<AuditEvent> findByUniversityIdIsNull(org.springframework.data.domain.Pageable pageable);
 }

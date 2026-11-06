@@ -116,6 +116,14 @@ public final class Messages {
 	public static final String USER_INVITE_NOT_ALLOWED = "This user has already signed in. Use Reset password instead.";
 	public static final String USER_LAST_ADMIN = "There must always be at least one active administrator.";
 
+	// ==================== Platform Owner Messages ====================
+	public static final String OWNER_UNIVERSITY_NOT_FOUND = "University not found.";
+	public static final String OWNER_SLUG_INVALID = "The short code may only use lowercase letters, digits and dashes (3 to 60 characters), and must start and end with a letter or digit.";
+	public static final String OWNER_SLUG_EXISTS = "Another university already uses this short code.";
+	public static final String OWNER_NAME_EXISTS = "Another university already has this name.";
+	public static final String OWNER_EMAIL_IN_OTHER_UNIVERSITY = "This email already belongs to an account. Use a different email.";
+	public static final String OWNER_ADMIN_ALREADY_ACTIVE = "This administrator has already signed in. They can use \"Forgot password\" if needed.";
+
 
 	// ==================== Demo Mode Messages ====================
 	/** Returned when a demo user attempts a blocked destructive operation. */
