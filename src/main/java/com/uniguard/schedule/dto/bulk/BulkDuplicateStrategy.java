@@ -1,0 +1,6 @@
+package com.uniguard.schedule.dto.bulk;
+
+public enum BulkDuplicateStrategy {
+	AUTO_RENAME,
+	SKIP_DUPLICATES
+}

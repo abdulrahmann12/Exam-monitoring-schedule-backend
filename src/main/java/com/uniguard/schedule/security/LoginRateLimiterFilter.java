@@ -1,0 +1,127 @@
+package com.uniguard.schedule.security;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+import com.uniguard.schedule.dto.common.ApiErrorResponse;
+
+import org.springframework.lang.NonNull;
+import java.io.IOException;
+import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/**
+ * In-memory IP-based rate limiter for the login endpoint.
+ * Limits each IP to {@value MAX_ATTEMPTS} attempts per {@value WINDOW_MILLIS}ms window, then returns 429.
+ * NOTE: Single-node only — use Redis-backed solution (e.g. Bucket4j) for multi-instance deployments.
+ */
+@Component
+@Order(1)
+public class LoginRateLimiterFilter extends OncePerRequestFilter {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(LoginRateLimiterFilter.class);
+
+    private static final String LOGIN_PATH = "/api/auth/login";
+    /** Two-step codes share the same per-IP budget as passwords. */
+    private static final String TWO_FACTOR_PATH = "/api/auth/2fa/verify";
+    private static final String POST = "POST";
+
+    /** Max login attempts per window. */
+    private static final int MAX_ATTEMPTS = 10;
+
+    /** Window duration in milliseconds (1 minute). */
+    private static final long WINDOW_MILLIS = 60_000L;
+
+    /** Prune stale entries every N requests. */
+    private static final int CLEANUP_INTERVAL = 500;
+
+    private final ConcurrentHashMap<String, long[]> ipWindows = new ConcurrentHashMap<>();
+    private final AtomicInteger requestCounter = new AtomicInteger(0);
+    private final ObjectMapper objectMapper;
+
+    public LoginRateLimiterFilter(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    protected void doFilterInternal(@NonNull HttpServletRequest request,
+                                    @NonNull HttpServletResponse response,
+                                    @NonNull FilterChain chain)
+            throws ServletException, IOException {
+
+        if (!POST.equalsIgnoreCase(request.getMethod())
+                || !(LOGIN_PATH.equals(request.getRequestURI()) || TWO_FACTOR_PATH.equals(request.getRequestURI()))) {
+            chain.doFilter(request, response);
+            return;
+        }
+
+        // Periodically remove stale entries to prevent unbounded memory growth.
+        if (requestCounter.incrementAndGet() % CLEANUP_INTERVAL == 0) {
+            pruneStaleEntries();
+        }
+
+        String ip = resolveClientIp(request);
+        long now = System.currentTimeMillis();
+
+        long[] window = ipWindows.compute(ip, (key, existing) -> {
+            if (existing == null || now - existing[1] > WINDOW_MILLIS) {
+                // Start new window: [count=1, windowStart=now]
+                return new long[]{1L, now};
+            }
+            existing[0]++;
+            return existing;
+        });
+
+        long attempts = window[0];
+        if (attempts > MAX_ATTEMPTS) {
+            LOGGER.warn("Rate limit exceeded for login from IP={}, attempts={}", ip, attempts);
+            writeRateLimitResponse(request, response);
+            return;
+        }
+
+        chain.doFilter(request, response);
+    }
+
+    private void writeRateLimitResponse(HttpServletRequest request, HttpServletResponse response)
+            throws IOException {
+        ApiErrorResponse error = new ApiErrorResponse(
+            Instant.now(),
+            HttpStatus.TOO_MANY_REQUESTS.value(),
+            "Too Many Requests",
+            "Too many login attempts. Please wait 1 minute before trying again.",
+            request.getRequestURI(),
+            List.of()
+        );
+        response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        objectMapper.writeValue(response.getOutputStream(), error);
+    }
+
+    /**
+     * The real client IP. With {@code server.forward-headers-strategy=native}, Tomcat's RemoteIpValve
+     * rewrites getRemoteAddr() from X-Forwarded-For <em>only</em> when the direct peer is a trusted
+     * proxy — so a client cannot pick its own IP by sending a forged header.
+     */
+    private String resolveClientIp(HttpServletRequest request) {
+        return request.getRemoteAddr();
+    }
+
+    /** Removes entries whose window has expired. */
+    private void pruneStaleEntries() {
+        long now = System.currentTimeMillis();
+        ipWindows.entrySet().removeIf(entry -> now - entry.getValue()[1] > WINDOW_MILLIS);
+    }
+}
+
+

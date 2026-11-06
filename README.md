@@ -115,7 +115,7 @@ admin `admin@local.test` / `LocalAdmin123` — see `src/test/resources/applicati
 ```bash
 mvn -q dependency:build-classpath -Dmdep.includeScope=test -Dmdep.outputFile=target/cp.txt
 mvn -q test-compile
-java -cp "target/test-classes;target/classes;$(cat target/cp.txt)" schedule.example.schedule.ScheduleApplication --spring.profiles.active=local
+java -cp "target/test-classes;target/classes;$(cat target/cp.txt)" com.uniguard.schedule.ScheduleApplication --spring.profiles.active=local
 ```
 
 (On macOS/Linux use `:` instead of `;` in the classpath.) The frontend dev server proxies `/api` to `http://localhost:8080`.

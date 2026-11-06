@@ -17,7 +17,7 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 
 # Copy the fat JAR produced by Spring Boot
-COPY --from=build /app/target/schedule-0.0.1-SNAPSHOT.jar app.jar
+COPY --from=build /app/target/uniguard-schedule-api-*.jar app.jar
 
 # Hugging Face Spaces routes external traffic to port 7860
 EXPOSE 7860

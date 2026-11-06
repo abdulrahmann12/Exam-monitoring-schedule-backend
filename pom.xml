@@ -11,10 +11,10 @@
         <relativePath/>
     </parent>
 
-    <groupId>schedule.example</groupId>
-    <artifactId>schedule</artifactId>
+    <groupId>com.uniguard</groupId>
+    <artifactId>uniguard-schedule-api</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>schedule-backend</name>
+    <name>uniguard-schedule-api</name>
     <description>Spring Boot backend for exam invigilator scheduling</description>
 
     <properties>
