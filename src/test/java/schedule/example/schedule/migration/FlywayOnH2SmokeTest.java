@@ -31,7 +31,7 @@ class FlywayOnH2SmokeTest {
 	@Test
 	void allMigrationsApplyAndNamesAreUniquePerUniversity() {
 		Integer applied = jdbc.queryForObject("select count(*) from \"flyway_schema_history\" where \"success\" = true", Integer.class);
-		assertThat(applied).isGreaterThanOrEqualTo(10);
+		assertThat(applied).isGreaterThanOrEqualTo(11);
 		assertThat(jdbc.queryForObject("select slug from universities", String.class)).isEqualTo("default");
 
 		jdbc.update("insert into universities (id, name, slug, active, created_at) values (" + UNI_2 + ", 'Second', 'second', true, now())");
