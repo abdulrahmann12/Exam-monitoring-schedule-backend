@@ -104,14 +104,7 @@ public class AuditController {
 	}
 
 	private static String row(String... cells) {
-		StringBuilder line = new StringBuilder();
-		for (int i = 0; i < cells.length; i++) {
-			if (i > 0) {
-				line.append(',');
-			}
-			line.append(cell(cells[i]));
-		}
-		return line.append("\r\n").toString();
+		return com.uniguard.schedule.util.CsvExport.row(cells);
 	}
 
 	/**
@@ -119,13 +112,6 @@ public class AuditController {
 	 * (=, +, -, @, tab, CR at the start) — a person's name like "=HYPERLINK(...)" stays plain text.
 	 */
 	static String cell(String value) {
-		if (value == null) {
-			return "\"\"";
-		}
-		String text = value;
-		if (!text.isEmpty() && "=+-@\t\r".indexOf(text.charAt(0)) >= 0) {
-			text = "'" + text;
-		}
-		return "\"" + text.replace("\"", "\"\"") + "\"";
+		return com.uniguard.schedule.util.CsvExport.cell(value);
 	}
 }

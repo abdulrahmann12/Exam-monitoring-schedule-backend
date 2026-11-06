@@ -112,6 +112,7 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler({
 		ValidationException.class,
 		MethodArgumentTypeMismatchException.class,
+		org.springframework.web.bind.MissingServletRequestParameterException.class,
 		ConstraintViolationException.class
 	})
 	public ResponseEntity<ApiErrorResponse> handleBadRequest(Exception ex, HttpServletRequest request) {
@@ -327,6 +328,11 @@ public class GlobalExceptionHandler {
 	private String badRequestMessage(Exception ex) {
 		if (ex instanceof MethodArgumentTypeMismatchException mismatch) {
 			return Messages.VALIDATION_INVALID_PARAMETER.formatted(mismatch.getName());
+		}
+
+		if (ex instanceof org.springframework.web.bind.MissingServletRequestParameterException missing) {
+			// A required ?parameter was left out: the client's mistake, not a server error.
+			return "Missing required parameter: " + missing.getParameterName();
 		}
 
 		if (ex instanceof ConstraintViolationException cve) {
