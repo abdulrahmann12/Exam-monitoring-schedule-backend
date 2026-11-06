@@ -31,7 +31,7 @@ class FlywayOnH2SmokeTest {
 	@Test
 	void allMigrationsApplyAndNamesAreUniquePerUniversity() {
 		Integer applied = jdbc.queryForObject("select count(*) from \"flyway_schema_history\" where \"success\" = true", Integer.class);
-		assertThat(applied).isGreaterThanOrEqualTo(9);
+		assertThat(applied).isGreaterThanOrEqualTo(10);
 		assertThat(jdbc.queryForObject("select slug from universities", String.class)).isEqualTo("default");
 
 		jdbc.update("insert into universities (id, name, slug, active, created_at) values (" + UNI_2 + ", 'Second', 'second', true, now())");
@@ -42,6 +42,22 @@ class FlywayOnH2SmokeTest {
 		// Rows must belong to a real university.
 		assertThatThrownBy(() -> insertRoom("X'000000000000000000000000000000A4'", "X'00000000000000000000000000000000'"))
 			.isInstanceOf(DataIntegrityViolationException.class);
+	}
+
+	@Test
+	void onlyThePlatformOwnerHasNoUniversity() {
+		insertAccount("X'000000000000000000000000000000B1'", "owner@smoke.test", "SUPER_ADMIN", "null");
+		insertAccount("X'000000000000000000000000000000B2'", "admin@smoke.test", "ADMIN", UNI_1);
+		// An owner inside a university, or a university account without one, is refused by the database itself.
+		assertThatThrownBy(() -> insertAccount("X'000000000000000000000000000000B3'", "owner2@smoke.test", "SUPER_ADMIN", UNI_1))
+			.isInstanceOf(DataIntegrityViolationException.class);
+		assertThatThrownBy(() -> insertAccount("X'000000000000000000000000000000B4'", "orphan@smoke.test", "ADMIN", "null"))
+			.isInstanceOf(DataIntegrityViolationException.class);
+	}
+
+	private void insertAccount(String id, String email, String role, String universityId) {
+		jdbc.update("insert into admin_users (id, created_at, email, password_hash, role, updated_at, university_id) "
+			+ "values (" + id + ", now(), '" + email + "', 'x', '" + role + "', now(), " + universityId + ")");
 	}
 
 	private void insertRoom(String id, String universityId) {
