@@ -14,6 +14,12 @@ pinned: false
 
 # 📅 Schedule Backend
 
+## Guides
+
+- [User guide](docs/USER_GUIDE.md) — for exam-office administrators, schedulers and viewers
+- [Setup and go-live guide](docs/DEPLOYMENT.md) — settings, Vercel + Hugging Face (cookie option A), Google/Microsoft sign-in, go-live checklist
+
+
 A **Spring Boot 3.5** REST API for managing exam invigilator scheduling.  
 Built with Java 21 (LTS), Spring Security (JWT), JPA/Hibernate, and MySQL.
 

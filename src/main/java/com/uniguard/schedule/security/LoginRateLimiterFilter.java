@@ -23,7 +23,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * In-memory IP-based rate limiter for the login endpoint.
- * Limits each IP to {@value MAX_ATTEMPTS} attempts per {@value WINDOW_MILLIS}ms window, then returns 429.
+ * Limits each IP to {@code app.security.login-rate-limit-per-minute} attempts (default 10) per minute, then returns 429.
+ * Behind a proxy that hides the client address (e.g. Vercel forwarding /api), many users share a
+ * few addresses: raise the limit there. The per-account lock (5 wrong passwords) is not affected.
  * NOTE: Single-node only — use Redis-backed solution (e.g. Bucket4j) for multi-instance deployments.
  */
 @Component
@@ -38,7 +40,7 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
     private static final String POST = "POST";
 
     /** Max login attempts per window. */
-    private static final int MAX_ATTEMPTS = 10;
+    private final int maxAttempts;
 
     /** Window duration in milliseconds (1 minute). */
     private static final long WINDOW_MILLIS = 60_000L;
@@ -50,8 +52,11 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
     private final AtomicInteger requestCounter = new AtomicInteger(0);
     private final ObjectMapper objectMapper;
 
-    public LoginRateLimiterFilter(ObjectMapper objectMapper) {
+    public LoginRateLimiterFilter(
+            ObjectMapper objectMapper,
+            @org.springframework.beans.factory.annotation.Value("${app.security.login-rate-limit-per-minute:10}") int maxAttempts) {
         this.objectMapper = objectMapper;
+        this.maxAttempts = Math.max(1, maxAttempts);
     }
 
     @Override
@@ -84,7 +89,7 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
         });
 
         long attempts = window[0];
-        if (attempts > MAX_ATTEMPTS) {
+        if (attempts > maxAttempts) {
             LOGGER.warn("Rate limit exceeded for login from IP={}, attempts={}", ip, attempts);
             writeRateLimitResponse(request, response);
             return;
