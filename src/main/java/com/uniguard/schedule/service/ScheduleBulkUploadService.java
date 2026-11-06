@@ -51,7 +51,7 @@ import com.uniguard.schedule.exception.ValidationException;
 import com.uniguard.schedule.repository.RoomAssignmentRepository;
 import com.uniguard.schedule.repository.RoomRepository;
 import com.uniguard.schedule.repository.TimeSlotRepository;
-import com.uniguard.schedule.util.ExcelParserUtil;
+import com.uniguard.schedule.util.TabularFile;
 import com.uniguard.schedule.util.NameNormalizationUtil;
 
 /**
@@ -78,8 +78,6 @@ public class ScheduleBulkUploadService {
 	private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
 	/** Canonical Time Slot display format used in the dropdown, e.g. "08:00 - 11:00". */
 	private static final DateTimeFormatter SLOT_DISPLAY_TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
-	/** Lenient parser that accepts both "8:00" and "08:00" when reading an uploaded cell back. */
-	private static final DateTimeFormatter SLOT_PARSE_TIME_FORMAT = DateTimeFormatter.ofPattern("H:mm");
 	private static final String SLOT_SEPARATOR = " - ";
 	/** Number of data rows (below the header) that receive dropdown/date validation in the template. */
 	private static final int TEMPLATE_VALIDATION_ROWS = 5000;
@@ -90,7 +88,6 @@ public class ScheduleBulkUploadService {
 	private final TimeSlotRepository timeSlotRepository;
 	private final RoomRepository roomRepository;
 	private final RoomAssignmentRepository roomAssignmentRepository;
-	private final ExcelParserUtil excelParserUtil;
 	private final DemoModeService demoModeService;
 	private final AutoAssignmentService autoAssignmentService;
 	private final ScheduleWriteLock scheduleWriteLock;
@@ -238,34 +235,45 @@ public class ScheduleBulkUploadService {
 
 	// ═══════════════════════════════ Phase 2: Upload ═══════════════════════════════
 
+	/** Upper limit of data rows per file (keeps one upload inside one reasonable transaction). */
+	private static final int MAX_IMPORT_ROWS = 5000;
+
+	/**
+	 * Imports an exam timetable from Excel or CSV: our template, or an export from a
+	 * student-information system (Banner, PeopleSoft, Odoo) — columns are found by their header names.
+	 * Missing time slots are created; rooms must already exist (their capacity is unknown).
+	 * All or nothing: if any row is wrong, nothing is saved and every problem is listed.
+	 *
+	 * @param dateOrder "DAY_FIRST" / "MONTH_FIRST" for dates like 03/04/2027; empty = decide from the file
+	 */
 	@Transactional(isolation = Isolation.READ_COMMITTED)
-	public ScheduleBulkUploadResultDTO uploadBulkSchedule(UUID scheduleGroupId, MultipartFile file) {
+	public ScheduleBulkUploadResultDTO uploadBulkSchedule(UUID scheduleGroupId, MultipartFile file, String dateOrder) {
 		demoModeService.rejectIfDemoUser("bulk-upload-schedule");
 		ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
 		scheduleWriteLock.acquire();
 
-		ExcelParserUtil.ParseResult<ScheduleRowSource> parseResult = excelParserUtil.parse(
-				file,
-				values -> new ScheduleRowSource(
-						values.getString(0),
-						values.getString(1),
-						values.getString(2),
-						values.getString(3),
-						values.getString(4),
-						values.getString(5)
-				)
-		);
-
-		LOGGER.info("Schedule bulk upload started: groupId={}, fileSizeBytes={}, rows={}",
-				group.getId(), file.getSize(), parseResult.totalRows());
-
-		if (parseResult.rows().isEmpty()) {
+		TabularFile.Table table = TabularFile.read(file, MAX_IMPORT_ROWS);
+		LOGGER.info("Schedule bulk upload started: groupId={}, fileSizeBytes={}, rows={}", group.getId(), file.getSize(), table.rows().size());
+		if (table.rows().isEmpty()) {
 			throw new ValidationException(Messages.SCHEDULE_BULK_UPLOAD_EMPTY);
 		}
+		TimetableColumns columns = TimetableColumns.of(table.headers());
+		TimetableColumns.DateOrder order = parseDateOrder(dateOrder);
+		if (order == null) {
+			order = TimetableColumns.detectOrder(table.rows().stream()
+				.map(row -> columns.cell(row, TimetableColumns.Field.DATE))
+				.filter(cell -> cell.date() == null)
+				.map(TabularFile.CellValue::text)
+				.toList());
+		}
 
-		Map<String, TimeSlot> slotsByFormattedLabel = timeSlotRepository
-				.findByScheduleGroupIdAndActiveTrueOrderBySortOrderAsc(group.getId()).stream()
-				.collect(Collectors.toMap(ScheduleBulkUploadService::formatSlot, Function.identity(), (a, b) -> a, LinkedHashMap::new));
+		List<TimeSlot> groupSlots = timeSlotRepository.findByScheduleGroupIdAndActiveTrueOrderBySortOrderAsc(group.getId());
+		Map<String, TimeSlot> slotsByTimes = new LinkedHashMap<>();
+		for (TimeSlot slot : groupSlots) {
+			slotsByTimes.putIfAbsent(timesKey(slot.getStartTime(), slot.getEndTime()), slot);
+		}
+		int nextSortOrder = groupSlots.stream().mapToInt(TimeSlot::getSortOrder).max().orElse(0) + 1;
+		List<String> slotsCreated = new ArrayList<>();
 
 		Map<String, Room> roomsByNormalizedName = roomRepository.findAllByActiveTrueOrderByNameAsc().stream()
 				.collect(Collectors.toMap(
@@ -279,8 +287,51 @@ public class ScheduleBulkUploadService {
 		List<ScheduleRowCommand> validCommands = new ArrayList<>();
 		Map<ScheduleRowKey, Integer> seenInFile = new LinkedHashMap<>();
 
-		for (ExcelParserUtil.ParsedRow<ScheduleRowSource> parsedRow : parseResult.rows()) {
-			validateRow(parsedRow, group.getId(), slotsByFormattedLabel, roomsByNormalizedName, seenInFile, errors, validCommands);
+		for (TabularFile.DataRow row : table.rows()) {
+			int rowNumber = row.rowNumber();
+			List<String> rowErrors = new ArrayList<>();
+			LocalDate examDate = TimetableColumns.parseDate(columns.cell(row, TimetableColumns.Field.DATE), order, rowErrors);
+			LocalTime[] times = resolveTimes(row, columns, rowErrors);
+			Room room = resolveRoom(row, columns, roomsByNormalizedName, rowErrors);
+			String subjectName = validateOptionalField(columns.subjectName(row), SUBJECT_NAME_MAX_LENGTH, Messages.SCHEDULE_BULK_ROW_SUBJECT_NAME_TOO_LONG, rowErrors);
+			String subjectCode = validateOptionalField(columns.subjectCode(row), SUBJECT_CODE_MAX_LENGTH, Messages.SCHEDULE_BULK_ROW_SUBJECT_CODE_TOO_LONG, rowErrors);
+			if (!rowErrors.isEmpty()) {
+				rowErrors.forEach(message -> errors.add(new BulkUploadErrorDTO(rowNumber, message)));
+				continue;
+			}
+
+			String key = timesKey(times[0], times[1]);
+			TimeSlot timeSlot = slotsByTimes.get(key);
+			if (timeSlot == null) {
+				// Student-information systems do not know our slot names: create the slot (undone if the upload fails).
+				timeSlot = new TimeSlot();
+				timeSlot.setScheduleGroup(group);
+				timeSlot.setLabel("Exam " + times[0].format(SLOT_DISPLAY_TIME_FORMAT) + "–" + times[1].format(SLOT_DISPLAY_TIME_FORMAT));
+				timeSlot.setStartTime(times[0]);
+				timeSlot.setEndTime(times[1]);
+				timeSlot.setSortOrder(nextSortOrder++);
+				timeSlot.setActive(true);
+				timeSlot = timeSlotRepository.save(timeSlot);
+				slotsByTimes.put(key, timeSlot);
+				slotsCreated.add(timeSlot.getLabel());
+			}
+
+			ScheduleRowKey rowKey = new ScheduleRowKey(examDate, timeSlot.getId(), room.getId());
+			Integer firstRowNumber = seenInFile.putIfAbsent(rowKey, rowNumber);
+			if (firstRowNumber != null) {
+				errors.add(new BulkUploadErrorDTO(rowNumber, MessageFormat.format(Messages.SCHEDULE_BULK_ROW_DUPLICATE_IN_FILE, firstRowNumber)));
+				continue;
+			}
+			if (roomAssignmentRepository.existsByScheduleGroupIdAndRoomIdAndTimeSlotIdAndExamDate(group.getId(), room.getId(), timeSlot.getId(), examDate)) {
+				errors.add(new BulkUploadErrorDTO(rowNumber, Messages.SCHEDULE_BULK_ROW_ALREADY_EXISTS));
+				continue;
+			}
+			Integer studentCount = parseStudentCount(columns.text(row, TimetableColumns.Field.STUDENTS), room, rowErrors);
+			if (!rowErrors.isEmpty()) {
+				rowErrors.forEach(message -> errors.add(new BulkUploadErrorDTO(rowNumber, message)));
+				continue;
+			}
+			validCommands.add(new ScheduleRowCommand(rowNumber, examDate, timeSlot, room, subjectName, subjectCode, studentCount));
 		}
 
 		List<RoomAssignment> toCreate = new ArrayList<>(validCommands.size());
@@ -308,7 +359,7 @@ public class ScheduleBulkUploadService {
 		}
 
 		List<RoomAssignment> saved = roomAssignmentRepository.saveAll(toCreate);
-		LOGGER.info("Schedule bulk upload created {} room assignment(s) for group {}.", saved.size(), group.getId());
+		LOGGER.info("Schedule bulk upload created {} room assignment(s) and {} time slot(s) for group {}.", saved.size(), slotsCreated.size(), group.getId());
 
 		AutoAssignmentService.StaffingResult staffing = autoAssignmentService.assignStaff(group.getId(), saved);
 
@@ -318,54 +369,82 @@ public class ScheduleBulkUploadService {
 				staffing.chiefSlotsFilled(),
 				staffing.invigilatorSlotsTotal(),
 				staffing.invigilatorSlotsFilled(),
-				staffing.warnings()
+				staffing.warnings(),
+				List.copyOf(slotsCreated),
+				columns.recognised()
 		);
 	}
 
-	/** Validates one parsed row, appending to either {@code errors} or {@code validCommands}. */
-	private void validateRow(
-			ExcelParserUtil.ParsedRow<ScheduleRowSource> parsedRow,
-			UUID groupId,
-			Map<String, TimeSlot> slotsByFormattedLabel,
-			Map<String, Room> roomsByNormalizedName,
-			Map<ScheduleRowKey, Integer> seenInFile,
-			List<BulkUploadErrorDTO> errors,
-			List<ScheduleRowCommand> validCommands
-	) {
-		int rowNumber = parsedRow.rowNumber();
-		ScheduleRowSource source = parsedRow.value();
-		List<String> rowErrors = new ArrayList<>();
-
-		LocalDate examDate = parseDate(source.dateText(), rowErrors);
-		TimeSlot timeSlot = parseTimeSlot(source.timeSlotText(), slotsByFormattedLabel, rowErrors);
-		Room room = parseRoom(source.roomText(), roomsByNormalizedName, rowErrors);
-		String subjectName = validateOptionalField(source.subjectName(), SUBJECT_NAME_MAX_LENGTH, Messages.SCHEDULE_BULK_ROW_SUBJECT_NAME_TOO_LONG, rowErrors);
-		String subjectCode = validateOptionalField(source.subjectCode(), SUBJECT_CODE_MAX_LENGTH, Messages.SCHEDULE_BULK_ROW_SUBJECT_CODE_TOO_LONG, rowErrors);
-
-		if (!rowErrors.isEmpty()) {
-			rowErrors.forEach(message -> errors.add(new BulkUploadErrorDTO(rowNumber, message)));
-			return;
+	private static TimetableColumns.DateOrder parseDateOrder(String value) {
+		if (value == null || value.isBlank() || "AUTO".equalsIgnoreCase(value)) {
+			return null;
 		}
-
-		ScheduleRowKey key = new ScheduleRowKey(examDate, timeSlot.getId(), room.getId());
-		Integer firstRowNumber = seenInFile.putIfAbsent(key, rowNumber);
-		if (firstRowNumber != null) {
-			errors.add(new BulkUploadErrorDTO(rowNumber, MessageFormat.format(Messages.SCHEDULE_BULK_ROW_DUPLICATE_IN_FILE, firstRowNumber)));
-			return;
+		try {
+			return TimetableColumns.DateOrder.valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
+		} catch (IllegalArgumentException ex) {
+			throw new ValidationException("dateOrder must be DAY_FIRST, MONTH_FIRST or empty.");
 		}
+	}
 
-		if (roomAssignmentRepository.existsByScheduleGroupIdAndRoomIdAndTimeSlotIdAndExamDate(groupId, room.getId(), timeSlot.getId(), examDate)) {
-			errors.add(new BulkUploadErrorDTO(rowNumber, Messages.SCHEDULE_BULK_ROW_ALREADY_EXISTS));
-			return;
+	private static String timesKey(LocalTime start, LocalTime end) {
+		return start.format(SLOT_DISPLAY_TIME_FORMAT) + "-" + end.format(SLOT_DISPLAY_TIME_FORMAT);
+	}
+
+	/** Separate start/end columns, or one "09:00 - 12:00" column. */
+	private static LocalTime[] resolveTimes(TabularFile.DataRow row, TimetableColumns columns, List<String> errors) {
+		LocalTime start = null;
+		LocalTime end = null;
+		if (columns.has(TimetableColumns.Field.START) && columns.has(TimetableColumns.Field.END)) {
+			TabularFile.CellValue startCell = columns.cell(row, TimetableColumns.Field.START);
+			TabularFile.CellValue endCell = columns.cell(row, TimetableColumns.Field.END);
+			start = TimetableColumns.parseTime(startCell);
+			end = TimetableColumns.parseTime(endCell);
+			if (start == null) {
+				errors.add(startCell.text().isBlank() ? "Start time is required." : "Start time \"" + startCell.text() + "\" is not a time (use e.g. 09:00).");
+			}
+			if (end == null) {
+				errors.add(endCell.text().isBlank() ? "End time is required." : "End time \"" + endCell.text() + "\" is not a time (use e.g. 12:00).");
+			}
+		} else {
+			String text = NameNormalizationUtil.normalizeWhitespace(columns.text(row, TimetableColumns.Field.SLOT));
+			if (text == null || text.isBlank()) {
+				errors.add(Messages.SCHEDULE_BULK_ROW_SLOT_REQUIRED);
+				return null;
+			}
+			LocalTime[] range = TimetableColumns.parseRange(text);
+			if (range == null) {
+				errors.add(MessageFormat.format(Messages.SCHEDULE_BULK_ROW_SLOT_INVALID_FORMAT, text));
+				return null;
+			}
+			start = range[0];
+			end = range[1];
 		}
-
-		Integer studentCount = parseStudentCount(source.studentCount(), room, rowErrors);
-		if (!rowErrors.isEmpty()) {
-			rowErrors.forEach(message -> errors.add(new BulkUploadErrorDTO(rowNumber, message)));
-			return;
+		if (start == null || end == null) {
+			return null;
 		}
+		if (!end.isAfter(start)) {
+			errors.add("The exam must end after it starts (" + start.format(SLOT_DISPLAY_TIME_FORMAT) + " – " + end.format(SLOT_DISPLAY_TIME_FORMAT) + ").");
+			return null;
+		}
+		return new LocalTime[] {start, end};
+	}
 
-		validCommands.add(new ScheduleRowCommand(rowNumber, examDate, timeSlot, room, subjectName, subjectCode, studentCount));
+	/** The room by name; with a building column also "Building Room" (Banner keeps them apart). */
+	private Room resolveRoom(TabularFile.DataRow row, TimetableColumns columns, Map<String, Room> roomsByNormalizedName, List<String> errors) {
+		String roomText = columns.text(row, TimetableColumns.Field.ROOM);
+		if (columns.has(TimetableColumns.Field.BUILDING)) {
+			String building = NameNormalizationUtil.normalizeWhitespace(columns.text(row, TimetableColumns.Field.BUILDING));
+			String roomOnly = NameNormalizationUtil.normalizeWhitespace(roomText);
+			if (building != null && !building.isBlank() && roomOnly != null && !roomOnly.isBlank()) {
+				for (String candidate : List.of(building + " " + roomOnly, building + "-" + roomOnly, building + roomOnly)) {
+					Room match = roomsByNormalizedName.get(NameNormalizationUtil.normalizeForComparison(candidate));
+					if (match != null) {
+						return match;
+					}
+				}
+			}
+		}
+		return parseRoom(roomText, roomsByNormalizedName, errors);
 	}
 
 	/**
@@ -389,52 +468,6 @@ public class ScheduleBulkUploadService {
 				context.add(candidate);
 			}
 		}
-	}
-
-	private LocalDate parseDate(String text, List<String> errors) {
-		String normalized = NameNormalizationUtil.normalizeWhitespace(text);
-		if (normalized == null || normalized.isBlank()) {
-			errors.add(Messages.SCHEDULE_BULK_ROW_DATE_REQUIRED);
-			return null;
-		}
-		try {
-			return LocalDate.parse(normalized, DATE_FORMAT);
-		} catch (DateTimeParseException exception) {
-			errors.add(MessageFormat.format(Messages.SCHEDULE_BULK_ROW_DATE_INVALID, normalized));
-			return null;
-		}
-	}
-
-	private TimeSlot parseTimeSlot(String text, Map<String, TimeSlot> slotsByFormattedLabel, List<String> errors) {
-		String normalized = NameNormalizationUtil.normalizeWhitespace(text);
-		if (normalized == null || normalized.isBlank()) {
-			errors.add(Messages.SCHEDULE_BULK_ROW_SLOT_REQUIRED);
-			return null;
-		}
-
-		String[] parts = normalized.split("\\s*-\\s*", 2);
-		if (parts.length != 2) {
-			errors.add(MessageFormat.format(Messages.SCHEDULE_BULK_ROW_SLOT_INVALID_FORMAT, normalized));
-			return null;
-		}
-
-		LocalTime start;
-		LocalTime end;
-		try {
-			start = LocalTime.parse(parts[0].trim(), SLOT_PARSE_TIME_FORMAT);
-			end = LocalTime.parse(parts[1].trim(), SLOT_PARSE_TIME_FORMAT);
-		} catch (DateTimeParseException exception) {
-			errors.add(MessageFormat.format(Messages.SCHEDULE_BULK_ROW_SLOT_INVALID_FORMAT, normalized));
-			return null;
-		}
-
-		String key = start.format(SLOT_DISPLAY_TIME_FORMAT) + SLOT_SEPARATOR + end.format(SLOT_DISPLAY_TIME_FORMAT);
-		TimeSlot match = slotsByFormattedLabel.get(key);
-		if (match == null) {
-			errors.add(MessageFormat.format(Messages.SCHEDULE_BULK_ROW_SLOT_NOT_FOUND, normalized));
-			return null;
-		}
-		return match;
 	}
 
 	private Room parseRoom(String text, Map<String, Room> roomsByNormalizedName, List<String> errors) {
@@ -485,9 +518,6 @@ public class ScheduleBulkUploadService {
 			errors.add("Students must be a whole number.");
 			return null;
 		}
-	}
-
-	private record ScheduleRowSource(String dateText, String timeSlotText, String roomText, String subjectName, String subjectCode, String studentCount) {
 	}
 
 	private record ScheduleRowCommand(int rowNumber, LocalDate examDate, TimeSlot timeSlot, Room room, String subjectName, String subjectCode, Integer studentCount) {

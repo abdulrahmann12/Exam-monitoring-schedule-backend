@@ -117,7 +117,11 @@ public class ScheduleGroupController {
 	}
 
 	@PostMapping(value = "/{id}/bulk-upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-	public ScheduleBulkUploadResultDTO uploadBulkSchedule(@PathVariable UUID id, @RequestParam("file") MultipartFile file) {
-		return scheduleBulkUploadService.uploadBulkSchedule(id, file);
+	public ScheduleBulkUploadResultDTO uploadBulkSchedule(
+		@PathVariable UUID id,
+		@RequestParam("file") MultipartFile file,
+		@RequestParam(value = "dateOrder", required = false) String dateOrder
+	) {
+		return scheduleBulkUploadService.uploadBulkSchedule(id, file, dateOrder);
 	}
 }

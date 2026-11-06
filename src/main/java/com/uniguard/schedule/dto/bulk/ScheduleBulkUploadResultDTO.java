@@ -15,6 +15,10 @@ public record ScheduleBulkUploadResultDTO(
 	int chiefSlotsFilled,
 	int invigilatorSlotsTotal,
 	int invigilatorSlotsFilled,
-	List<String> warnings
+	List<String> warnings,
+	/** Time slots the import created because the file used times no existing slot had. */
+	List<String> timeSlotsCreated,
+	/** Which column of the file was read as what (e.g. "Exam Start Time → start time"). */
+	List<String> columnsRecognised
 ) {
 }
