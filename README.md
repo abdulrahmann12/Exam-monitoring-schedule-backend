@@ -51,6 +51,10 @@ The full annotated list is in [`.env.example`](.env.example).
 | `BOOTSTRAP_OWNER_RESET_PASSWORD` | — | `true` for one restart to reset the owner's password (recovery) |
 | `MFA_ENCRYPTION_KEY` | for two-step sign-in | 32 random bytes, Base64 (`openssl rand -base64 32`). Encrypts the authenticator secrets. Keep it stable and separate from `JWT_SECRET`; without it users cannot switch two-step sign-in on. Changing it breaks existing set-ups (recovery codes still work). The `BOOTSTRAP_*_RESET_PASSWORD` recoveries also remove two-step sign-in |
 | `MFA_ISSUER` | — | Name shown in the authenticator app (default `Uni-Guard Schedules`) |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | for Google sign-in | From Google Cloud Console > APIs & Services > Credentials (OAuth client, type Web application). Redirect URI: `<APP_FRONTEND_URL>/api/auth/sso/google/callback` |
+| `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | for Microsoft sign-in | From Microsoft Entra admin center > App registrations (Web platform). Redirect URI: `<APP_FRONTEND_URL>/api/auth/sso/microsoft/callback` |
+| `MICROSOFT_TENANT` | — | `organizations` (any work/school account, default), `common` (also personal accounts) or one organisation's tenant id |
+| `APP_SSO_CALLBACK_BASE_URL` | — | Only if the redirect URI must use another address than `APP_FRONTEND_URL` |
 | `JWT_EXPIRATION_MINUTES`         | — | Access token lifetime, default 15 (renewed silently from the refresh cookie) |
 | `AUTH_COOKIE_SAME_SITE`          | — | `Lax` (default) when frontend and API share a site; `None` for different sites (HTTPS only) |
 | `AUTH_COOKIE_SECURE`             | — | `true` (default); `false` only for plain-http local development |

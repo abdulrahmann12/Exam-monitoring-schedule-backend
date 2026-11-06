@@ -70,8 +70,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
 	@Override
 	protected boolean shouldNotFilter(@NonNull HttpServletRequest request) {
-		return SESSION_ENDPOINTS.contains(request.getRequestURI());
+		String uri = request.getRequestURI();
+		return SESSION_ENDPOINTS.contains(uri) || PUBLIC_SSO.matcher(uri).matches();
 	}
+
+	/** Sign-in with Microsoft / Google: button list, start and return (nobody is signed in yet). */
+	private static final java.util.regex.Pattern PUBLIC_SSO =
+		java.util.regex.Pattern.compile("^/api/auth/sso/(providers|[a-z]+/(start|callback))$");
 
 	@Override
 	protected void doFilterInternal(

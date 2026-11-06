@@ -127,6 +127,12 @@ public final class Messages {
 	public static final String MFA_RESET_NOT_ON = "This user does not use two-step sign-in.";
 	public static final String MFA_RESET_OWN = "To change your own two-step sign-in use Settings > Account security.";
 
+	// ==================== Sign-in with Microsoft / Google ====================
+	public static final String SSO_ALREADY_CONNECTED = "This account is already connected to an account of this provider. Disconnect it first.";
+	public static final String SSO_CONNECTION_NOT_FOUND = "Connection not found.";
+	public static final String SSO_TENANT_INVALID = "The Microsoft tenant id is a code like 72f988bf-86f1-41af-91ab-2d7cd011db47 (Microsoft Entra admin center > Overview).";
+	public static final String SSO_PROVIDER_UNAVAILABLE = "This sign-in option is not set up on the server.";
+
 	// ==================== Platform Owner Messages ====================
 	public static final String OWNER_UNIVERSITY_NOT_FOUND = "University not found.";
 	public static final String OWNER_SLUG_INVALID = "The short code may only use lowercase letters, digits and dashes (3 to 60 characters), and must start and end with a letter or digit.";

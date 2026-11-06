@@ -28,6 +28,9 @@ public class AuthCookies {
 	/** Short-lived: "password was right, waiting for the two-step code". Sent only to /api/auth/2fa. */
 	public static final String MFA_COOKIE = "ug_mfa";
 	static final String MFA_PATH = "/api/auth/2fa";
+	/** Binds a Microsoft / Google sign-in to this browser (login CSRF protection). Sent only to /api/auth/sso. */
+	public static final String SSO_COOKIE = "ug_sso";
+	static final String SSO_PATH = "/api/auth/sso";
 	static final String ACCESS_PATH = "/api";
 	static final String REFRESH_PATH = "/api/auth";
 
@@ -47,6 +50,18 @@ public class AuthCookies {
 
 	public void writeMfa(HttpServletResponse response, String token, Instant expiresAt) {
 		add(response, MFA_COOKIE, token, MFA_PATH, untilNow(expiresAt));
+	}
+
+	public void writeSso(HttpServletResponse response, String state, Instant expiresAt) {
+		add(response, SSO_COOKIE, state, SSO_PATH, untilNow(expiresAt));
+	}
+
+	public void clearSso(HttpServletResponse response) {
+		add(response, SSO_COOKIE, "", SSO_PATH, Duration.ZERO);
+	}
+
+	public String readSso(HttpServletRequest request) {
+		return read(request, SSO_COOKIE);
 	}
 
 	public void clearMfa(HttpServletResponse response) {

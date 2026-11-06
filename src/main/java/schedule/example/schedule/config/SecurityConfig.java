@@ -96,6 +96,12 @@ public class SecurityConfig {
 				.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/demo-login", "/api/auth/refresh", "/api/auth/logout").permitAll()
 				// Public: "forgot password" and setting a password from an emailed link.
 				.requestMatchers(HttpMethod.POST, "/api/auth/forgot-password", "/api/auth/reset-password", "/api/auth/reset-password/check").permitAll()
+				// Sign-in with Microsoft / Google: button list, start and return are public browser navigations.
+				.requestMatchers(HttpMethod.GET, "/api/auth/sso/providers", "/api/auth/sso/*/start", "/api/auth/sso/*/callback").permitAll()
+				// The university's Microsoft organisation: its administrators only.
+				.requestMatchers("/api/auth/sso/university").hasRole(ADMIN)
+				// Own connections: every signed-in user (the demo is refused by DemoReadOnlyFilter).
+				.requestMatchers("/api/auth/sso/**").authenticated()
 				// Second step of sign-in (the challenge cookie proves the password was right).
 				.requestMatchers(HttpMethod.POST, "/api/auth/2fa/verify").permitAll()
 				// Own two-step settings: every signed-in user (the demo is refused by DemoReadOnlyFilter).

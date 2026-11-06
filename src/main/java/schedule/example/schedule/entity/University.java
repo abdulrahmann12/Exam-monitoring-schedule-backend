@@ -40,4 +40,11 @@ public class University {
 
 	@Column(name = "created_at", nullable = false)
 	private Instant createdAt;
+
+	/**
+	 * The university's own Microsoft organisation (Entra tenant id), set by its administrator.
+	 * Only accounts of this university signing in from this organisation are matched by email.
+	 */
+	@Column(name = "microsoft_tenant_id", length = 64)
+	private String microsoftTenantId;
 }
