@@ -81,6 +81,7 @@ public class PlatformOwnerService {
 	private final AuditService auditService;
 	private final PasswordEncoder passwordEncoder;
 	private final JdbcTemplate jdbc;
+	private final schedule.example.schedule.service.TwoFactorService twoFactorService;
 	private final TransactionTemplate transaction;
 	private final TransactionTemplate readOnly;
 
@@ -95,6 +96,7 @@ public class PlatformOwnerService {
 		AuditService auditService,
 		PasswordEncoder passwordEncoder,
 		JdbcTemplate jdbc,
+		schedule.example.schedule.service.TwoFactorService twoFactorService,
 		PlatformTransactionManager transactionManager
 	) {
 		this.universities = universities;
@@ -107,6 +109,7 @@ public class PlatformOwnerService {
 		this.auditService = auditService;
 		this.passwordEncoder = passwordEncoder;
 		this.jdbc = jdbc;
+		this.twoFactorService = twoFactorService;
 		this.transaction = new TransactionTemplate(transactionManager);
 		this.readOnly = new TransactionTemplate(transactionManager);
 		this.readOnly.setReadOnly(true);
@@ -240,6 +243,29 @@ public class PlatformOwnerService {
 		return new AdminInvitation(summaryOf(universityId), email, invited.link().link(), invited.link().expiresAt(), invited.emailSent());
 	}
 
+	/**
+	 * A university administrator lost their phone and recovery codes (e.g. the only administrator):
+	 * the owner removes two-step sign-in; the administrator is signed out and sets it up again.
+	 */
+	public UniversitySummary resetAdministratorTwoFactor(UUID universityId, UUID userId) {
+		transaction.executeWithoutResult(status -> {
+			University university = requireUniversity(universityId);
+			AdminUser admin = users.findById(userId)
+				.filter(found -> universityId.equals(found.getUniversityId()) && found.getRole() == AdminRole.ADMIN)
+				.orElseThrow(() -> new NotFoundException(Messages.USER_NOT_FOUND));
+			if (!admin.isTotpEnabled()) {
+				throw new BusinessRuleViolationException(Messages.MFA_RESET_NOT_ON);
+			}
+			twoFactorService.clear(admin);
+			admin.setTokenVersion(admin.getTokenVersion() + 1);
+			users.save(admin);
+			sessionService.revokeAllForUser(admin.getId());
+			auditService.recordAfterCommit(entry("UNIVERSITY_ADMIN_2FA_RESET", university,
+				"Reset two-step sign-in of " + admin.getEmail() + " (administrator of '" + university.getName() + "')"));
+		});
+		return summaryOf(universityId);
+	}
+
 	// ─────────────────────────── Helpers ───────────────────────────
 
 	private record Invited(AccountTokenService.Issued link, boolean emailSent) {
@@ -274,7 +300,8 @@ public class PlatformOwnerService {
 		UUID id = university.getId();
 		List<AdminInfo> admins = users.findByUniversityIdAndRoleOrderByEmailAsc(id, AdminRole.ADMIN).stream()
 			.map(admin -> new AdminInfo(admin.getId(), admin.getEmail(), admin.getDisplayName(), admin.isEnabled(),
-				admin.getLastLoginAt() != null, admin.getLastLoginAt() == null && accountTokenService.hasPendingInvite(admin.getId())))
+				admin.getLastLoginAt() != null, admin.getLastLoginAt() == null && accountTokenService.hasPendingInvite(admin.getId()),
+				admin.isTotpEnabled()))
 			.toList();
 		return new UniversitySummary(id, university.getName(), university.getSlug(), university.isActive(), university.getCreatedAt(),
 			usage.accounts().getOrDefault(id, 0L), usage.people().getOrDefault(id, 0L), usage.rooms().getOrDefault(id, 0L),

@@ -96,6 +96,10 @@ public class SecurityConfig {
 				.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/demo-login", "/api/auth/refresh", "/api/auth/logout").permitAll()
 				// Public: "forgot password" and setting a password from an emailed link.
 				.requestMatchers(HttpMethod.POST, "/api/auth/forgot-password", "/api/auth/reset-password", "/api/auth/reset-password/check").permitAll()
+				// Second step of sign-in (the challenge cookie proves the password was right).
+				.requestMatchers(HttpMethod.POST, "/api/auth/2fa/verify").permitAll()
+				// Own two-step settings: every signed-in user (the demo is refused by DemoReadOnlyFilter).
+				.requestMatchers("/api/auth/2fa", "/api/auth/2fa/**").authenticated()
 				// Own session: every signed-in user.
 				.requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
 				.requestMatchers(HttpMethod.POST, "/api/auth/logout-all", "/api/auth/change-password").authenticated()

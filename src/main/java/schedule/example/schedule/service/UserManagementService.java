@@ -63,6 +63,7 @@ public class UserManagementService {
 	private final AccountTokenService accountTokenService;
 	private final AccountEmailService accountEmailService;
 	private final AuditService auditService;
+	private final TwoFactorService twoFactorService;
 
 	@Transactional(readOnly = true)
 	public List<UserResponse> list() {
@@ -231,6 +232,25 @@ public class UserManagementService {
 		return toResponse(saved);
 	}
 
+	/** Lost phone and no recovery codes: an administrator removes two-step sign-in; the user is signed out. */
+	@Transactional
+	public UserResponse resetTwoFactor(UUID id, UUID actorId) {
+		AdminUser user = requireManageable(id);
+		if (user.getId().equals(actorId)) {
+			throw new BusinessRuleViolationException(Messages.MFA_RESET_OWN);
+		}
+		if (!user.isTotpEnabled()) {
+			throw new BusinessRuleViolationException(Messages.MFA_RESET_NOT_ON);
+		}
+		twoFactorService.clear(user);
+		user.setTokenVersion(user.getTokenVersion() + 1);
+		AdminUser saved = adminUserRepository.save(user);
+		sessionService.revokeAllForUser(user.getId());
+		LOGGER.warn("[USERS] '{}' reset two-step sign-in of '{}'.", actorEmail(actorId), user.getEmail());
+		audit("USER_2FA_RESET", user, "Reset two-step sign-in of " + user.getEmail() + " (signed out everywhere)");
+		return toResponse(saved);
+	}
+
 	@Transactional
 	public void delete(UUID id, UUID actorId) {
 		List<AdminUser> activeAdmins = adminUserRepository.lockActiveAdmins(TenantContext.require());
@@ -309,7 +329,8 @@ public class UserManagementService {
 			user.isMustChangePassword(),
 			accountTokenService.hasPendingInvite(user.getId()),
 			user.getLastLoginAt(),
-			user.getCreatedAt()
+			user.getCreatedAt(),
+			user.isTotpEnabled()
 		);
 	}
 }

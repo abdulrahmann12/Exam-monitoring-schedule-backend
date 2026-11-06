@@ -48,6 +48,7 @@ public class AuthService {
 	private final SessionService sessionService;
 	private final AuditService auditService;
 	private final AdminUserDetailsService adminUserDetailsService;
+	private final TwoFactorService twoFactorService;
 
 	/** Everything the controller needs to set the two cookies. */
 	public record SignedIn(String email, String accessToken, Instant accessExpiresAt, String refreshToken, Instant sessionExpiresAt) {
@@ -56,7 +57,11 @@ public class AuthService {
 	public record AccessToken(String token, Instant expiresAt) {
 	}
 
-	public SignedIn login(@Valid LoginRequest request, HttpServletRequest httpRequest) {
+	/** Either signed in, or the password was right and the two-step code is still needed. */
+	public record LoginResult(SignedIn signedIn, TwoFactorService.Challenge twoFactor, String email) {
+	}
+
+	public LoginResult login(@Valid LoginRequest request, HttpServletRequest httpRequest) {
 		// A locked account is refused before the password is even checked.
 		var account = adminUserRepository.findByEmailIgnoreCase(request.email());
 		try {
@@ -82,9 +87,25 @@ public class AuthService {
 				.withOutcome(AuditEntry.Outcome.DENIED).forAccount(admin.getEmail()));
 			throw new DisabledException(Messages.AUTH_UNIVERSITY_INACTIVE);
 		}
+		if (admin.isTotpEnabled()) {
+			// The failure counter is NOT reset here: otherwise knowing the password would allow
+			// endless guessing of the 6-digit code (a few guesses, password again, repeat).
+			TwoFactorService.Challenge challenge = twoFactorService.beginChallenge(admin);
+			auditService.record(authEvent("LOGIN_PASSWORD_ACCEPTED", AuditCategory.AUTH, "Password accepted, waiting for the two-step code")
+				.forAccount(admin.getEmail()));
+			return new LoginResult(null, challenge, admin.getEmail());
+		}
 		loginAttemptService.recordSuccess(admin.getId());
 		SignedIn signedIn = openSession(admin, httpRequest);
 		auditService.record(authEvent("LOGIN_SUCCEEDED", AuditCategory.AUTH, "Signed in").forAccount(admin.getEmail()));
+		return new LoginResult(signedIn, null, admin.getEmail());
+	}
+
+	/** Second step of sign-in: the code from the authenticator app (or a recovery code). */
+	public SignedIn completeTwoFactor(String challengeToken, String code, HttpServletRequest httpRequest) {
+		AdminUser user = twoFactorService.completeChallenge(challengeToken, code);
+		SignedIn signedIn = openSession(user, httpRequest);
+		auditService.record(authEvent("LOGIN_SUCCEEDED", AuditCategory.AUTH, "Signed in (two-step)").forAccount(user.getEmail()));
 		return signedIn;
 	}
 

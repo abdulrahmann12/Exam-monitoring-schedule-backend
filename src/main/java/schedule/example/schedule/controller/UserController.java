@@ -61,6 +61,11 @@ public class UserController {
 		return userManagementService.update(id, request, actor.getId());
 	}
 
+	@PostMapping("/{id}/reset-2fa")
+	public UserResponse resetTwoFactor(@PathVariable UUID id, @AuthenticationPrincipal AppUserPrincipal actor) {
+		return userManagementService.resetTwoFactor(id, actor.getId());
+	}
+
 	@PostMapping("/{id}/unlock")
 	public UserResponse unlock(@PathVariable UUID id, @AuthenticationPrincipal AppUserPrincipal actor) {
 		return userManagementService.unlock(id, actor.getId());

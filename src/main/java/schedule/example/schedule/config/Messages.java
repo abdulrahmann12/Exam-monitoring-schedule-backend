@@ -116,6 +116,17 @@ public final class Messages {
 	public static final String USER_INVITE_NOT_ALLOWED = "This user has already signed in. Use Reset password instead.";
 	public static final String USER_LAST_ADMIN = "There must always be at least one active administrator.";
 
+	// ==================== Two-step sign-in ====================
+	public static final String MFA_NOT_AVAILABLE = "Two-step sign-in is not available on this server yet (MFA_ENCRYPTION_KEY is not set). Contact support.";
+	public static final String MFA_ALREADY_ON = "Two-step sign-in is already on.";
+	public static final String MFA_NOT_ON = "Two-step sign-in is not on.";
+	public static final String MFA_SETUP_FIRST = "Start the set-up first, then enter the code from the app.";
+	public static final String MFA_CODE_WRONG = "The code is not correct. Check the time on your phone and try the newest code.";
+	public static final String MFA_CHALLENGE_INVALID = "Your sign-in step expired. Please sign in again with your password.";
+	public static final String MFA_SERVER_KEY_PROBLEM = "Two-step codes cannot be checked right now. Use a recovery code, or contact support.";
+	public static final String MFA_RESET_NOT_ON = "This user does not use two-step sign-in.";
+	public static final String MFA_RESET_OWN = "To change your own two-step sign-in use Settings > Account security.";
+
 	// ==================== Platform Owner Messages ====================
 	public static final String OWNER_UNIVERSITY_NOT_FOUND = "University not found.";
 	public static final String OWNER_SLUG_INVALID = "The short code may only use lowercase letters, digits and dashes (3 to 60 characters), and must start and end with a letter or digit.";

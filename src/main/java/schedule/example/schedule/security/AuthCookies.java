@@ -25,6 +25,9 @@ public class AuthCookies {
 
 	public static final String ACCESS_COOKIE = "ug_access";
 	public static final String REFRESH_COOKIE = "ug_refresh";
+	/** Short-lived: "password was right, waiting for the two-step code". Sent only to /api/auth/2fa. */
+	public static final String MFA_COOKIE = "ug_mfa";
+	static final String MFA_PATH = "/api/auth/2fa";
 	static final String ACCESS_PATH = "/api";
 	static final String REFRESH_PATH = "/api/auth";
 
@@ -40,6 +43,18 @@ public class AuthCookies {
 
 	public void writeRefresh(HttpServletResponse response, String token, Instant expiresAt) {
 		add(response, REFRESH_COOKIE, token, REFRESH_PATH, untilNow(expiresAt));
+	}
+
+	public void writeMfa(HttpServletResponse response, String token, Instant expiresAt) {
+		add(response, MFA_COOKIE, token, MFA_PATH, untilNow(expiresAt));
+	}
+
+	public void clearMfa(HttpServletResponse response) {
+		add(response, MFA_COOKIE, "", MFA_PATH, Duration.ZERO);
+	}
+
+	public String readMfa(HttpServletRequest request) {
+		return read(request, MFA_COOKIE);
 	}
 
 	/** Deletes both cookies (logout, failed refresh). */

@@ -77,7 +77,12 @@ public class AuthController {
 
 	@PostMapping("/login")
 	public SessionResponse login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest, HttpServletResponse response) {
-		return writeSession(authService.login(request, httpRequest), response);
+		AuthService.LoginResult result = authService.login(request, httpRequest);
+		if (result.twoFactor() != null) {
+			authCookies.writeMfa(response, result.twoFactor().token(), result.twoFactor().expiresAt());
+			return SessionResponse.twoFactorPending(result.email());
+		}
+		return writeSession(result.signedIn(), response);
 	}
 
 	/**
@@ -123,7 +128,8 @@ public class AuthController {
 			user.isMustChangePassword(),
 			user.getUniversityId(),
 			user.getUniversityId() == null ? null
-				: universityRepository.findById(user.getUniversityId()).map(University::getName).orElse(null)
+				: universityRepository.findById(user.getUniversityId()).map(University::getName).orElse(null),
+			user.isTwoFactorEnabled()
 		);
 	}
 

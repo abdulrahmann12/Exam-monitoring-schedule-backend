@@ -38,7 +38,8 @@ public final class OwnerDtos {
 	) {
 	}
 
-	public record AdminInfo(UUID id, String email, String displayName, boolean enabled, boolean signedIn, boolean invitationPending) {
+	public record AdminInfo(UUID id, String email, String displayName, boolean enabled, boolean signedIn, boolean invitationPending,
+		boolean twoFactorEnabled) {
 	}
 
 	/** One university with its usage. Counts only, never the university's data itself. */

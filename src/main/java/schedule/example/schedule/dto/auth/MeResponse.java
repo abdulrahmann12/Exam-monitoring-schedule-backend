@@ -15,6 +15,7 @@ public record MeResponse(
         List<String> roles,
         boolean mustChangePassword,
         UUID universityId,
-        String universityName
+        String universityName,
+        boolean twoFactorEnabled
 ) {
 }

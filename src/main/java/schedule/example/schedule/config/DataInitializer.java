@@ -44,6 +44,7 @@ public class DataInitializer implements ApplicationRunner {
 	private final ScheduleGroupSupport scheduleGroupSupport;
 	private final AuditService auditService;
 	private final UniversityProvisioning universityProvisioning;
+	private final schedule.example.schedule.service.TwoFactorService twoFactorService;
 	private final TransactionTemplate transaction;
 
 	public DataInitializer(
@@ -57,6 +58,7 @@ public class DataInitializer implements ApplicationRunner {
 		ScheduleGroupSupport scheduleGroupSupport,
 		AuditService auditService,
 		UniversityProvisioning universityProvisioning,
+		schedule.example.schedule.service.TwoFactorService twoFactorService,
 		PlatformTransactionManager transactionManager
 	) {
 		this.adminUserRepository = adminUserRepository;
@@ -69,6 +71,7 @@ public class DataInitializer implements ApplicationRunner {
 		this.scheduleGroupSupport = scheduleGroupSupport;
 		this.auditService = auditService;
 		this.universityProvisioning = universityProvisioning;
+		this.twoFactorService = twoFactorService;
 		this.transaction = new TransactionTemplate(transactionManager);
 	}
 
@@ -150,6 +153,7 @@ public class DataInitializer implements ApplicationRunner {
 				.orElseThrow(() -> new BeanCreationException("Cannot reset password: no account '" + email + "'."));
 			admin.setPasswordHash(passwordEncoder.encode(password));
 			admin.setTokenVersion(admin.getTokenVersion() + 1);
+			twoFactorService.clear(admin); // recovery must work even when the phone is lost
 			admin.setFailedLoginAttempts(0);
 			admin.setLockedUntil(null);
 			// Recovery must always end with a usable administrator.
@@ -229,6 +233,7 @@ public class DataInitializer implements ApplicationRunner {
 				.orElseThrow(() -> new BeanCreationException("Cannot reset password: '" + email + "' is not the platform owner."));
 			owner.setPasswordHash(passwordEncoder.encode(password));
 			owner.setTokenVersion(owner.getTokenVersion() + 1);
+			twoFactorService.clear(owner); // recovery must work even when the phone is lost
 			owner.setFailedLoginAttempts(0);
 			owner.setLockedUntil(null);
 			owner.setEnabled(true);

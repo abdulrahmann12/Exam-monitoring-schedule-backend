@@ -97,6 +97,25 @@ public class AdminUser {
 	@Column(name = "token_version", nullable = false)
 	private int tokenVersion = 0;
 
+	/** Two-step sign-in: authenticator secret, encrypted (see SecretCipher). Never sent to the browser. */
+	@Column(name = "totp_secret", length = 255)
+	private String totpSecret;
+
+	/** Secret shown during set-up, active only after the first correct code. */
+	@Column(name = "totp_pending_secret", length = 255)
+	private String totpPendingSecret;
+
+	@Builder.Default
+	@Column(name = "totp_enabled", nullable = false)
+	private boolean totpEnabled = false;
+
+	@Column(name = "totp_enabled_at")
+	private Instant totpEnabledAt;
+
+	/** Time step of the last accepted code: a code can be used only once. */
+	@Column(name = "totp_last_step")
+	private Long totpLastStep;
+
 	@CreatedDate
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;

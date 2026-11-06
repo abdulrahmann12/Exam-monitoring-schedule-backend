@@ -17,6 +17,7 @@ public record UserResponse(
 	boolean mustChangePassword,
 	boolean invitePending,
 	Instant lastLoginAt,
-	Instant createdAt
+	Instant createdAt,
+	boolean twoFactorEnabled
 ) {
 }

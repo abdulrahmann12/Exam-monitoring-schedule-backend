@@ -49,6 +49,8 @@ The full annotated list is in [`.env.example`](.env.example).
 | `BOOTSTRAP_ADMIN_RESET_PASSWORD` | — | `true` for one restart to reset that admin's password (recovery) |
 | `BOOTSTRAP_OWNER_EMAIL` / `BOOTSTRAP_OWNER_PASSWORD` | — | Optional. Creates the platform owner (owner panel at `/owner`: create universities, switch them off/on, usage). Belongs to no university and sees no university data. Must be an email no university account uses |
 | `BOOTSTRAP_OWNER_RESET_PASSWORD` | — | `true` for one restart to reset the owner's password (recovery) |
+| `MFA_ENCRYPTION_KEY` | for two-step sign-in | 32 random bytes, Base64 (`openssl rand -base64 32`). Encrypts the authenticator secrets. Keep it stable and separate from `JWT_SECRET`; without it users cannot switch two-step sign-in on. Changing it breaks existing set-ups (recovery codes still work). The `BOOTSTRAP_*_RESET_PASSWORD` recoveries also remove two-step sign-in |
+| `MFA_ISSUER` | — | Name shown in the authenticator app (default `Uni-Guard Schedules`) |
 | `JWT_EXPIRATION_MINUTES`         | — | Access token lifetime, default 15 (renewed silently from the refresh cookie) |
 | `AUTH_COOKIE_SAME_SITE`          | — | `Lax` (default) when frontend and API share a site; `None` for different sites (HTTPS only) |
 | `AUTH_COOKIE_SECURE`             | — | `true` (default); `false` only for plain-http local development |

@@ -62,6 +62,11 @@ public class OwnerController {
 		return ownerService.addAdministrator(id, request);
 	}
 
+	@PostMapping("/universities/{id}/admins/{userId}/reset-2fa")
+	public UniversitySummary resetAdminTwoFactor(@PathVariable UUID id, @PathVariable UUID userId) {
+		return ownerService.resetAdministratorTwoFactor(id, userId);
+	}
+
 	@GetMapping("/activity")
 	public PageResponse<AuditEventResponse> activity(
 		@RequestParam(defaultValue = "0") int page,

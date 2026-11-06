@@ -23,6 +23,7 @@ public class AppUserPrincipal extends User {
 	private final UUID sessionId;
 	/** The user's university; every data access in this request is limited to it. */
 	private final UUID universityId;
+	private final boolean twoFactorEnabled;
 
 	public AppUserPrincipal(AdminUser user) {
 		this(user, null);
@@ -44,6 +45,11 @@ public class AppUserPrincipal extends User {
 		this.mustChangePassword = user.isMustChangePassword();
 		this.sessionId = sessionId;
 		this.universityId = user.getUniversityId();
+		this.twoFactorEnabled = user.isTotpEnabled();
+	}
+
+	public boolean isTwoFactorEnabled() {
+		return twoFactorEnabled;
 	}
 
 	public UUID getUniversityId() {

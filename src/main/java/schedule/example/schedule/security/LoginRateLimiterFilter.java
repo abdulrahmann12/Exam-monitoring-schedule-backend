@@ -33,6 +33,8 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
     private static final Logger LOGGER = LoggerFactory.getLogger(LoginRateLimiterFilter.class);
 
     private static final String LOGIN_PATH = "/api/auth/login";
+    /** Two-step codes share the same per-IP budget as passwords. */
+    private static final String TWO_FACTOR_PATH = "/api/auth/2fa/verify";
     private static final String POST = "POST";
 
     /** Max login attempts per window. */
@@ -58,7 +60,8 @@ public class LoginRateLimiterFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain chain)
             throws ServletException, IOException {
 
-        if (!POST.equalsIgnoreCase(request.getMethod()) || !LOGIN_PATH.equals(request.getRequestURI())) {
+        if (!POST.equalsIgnoreCase(request.getMethod())
+                || !(LOGIN_PATH.equals(request.getRequestURI()) || TWO_FACTOR_PATH.equals(request.getRequestURI()))) {
             chain.doFilter(request, response);
             return;
         }
