@@ -60,7 +60,9 @@ public final class AuditRoutes {
 		route("DELETE /api/schedule-groups/{id}", "EXAM_PERIOD_DELETED", AuditCategory.SCHEDULES, "SCHEDULE_GROUP", "id", named("Deleted exam period")),
 		route("POST /api/schedule-groups/{id}/notify", "SCHEDULES_EMAILED", AuditCategory.SCHEDULES, "SCHEDULE_GROUP", "id", (body, name) ->
 			"Emailed schedules for " + quote(name) + (body instanceof ScheduleNotifyResponse r
-				? ": " + r.sent() + " sent, " + r.skipped() + " skipped, " + r.failed() + " failed" : "")),
+				? ": " + r.queued() + " queued, " + r.unchanged() + " unchanged, " + r.skipped() + " without email" : "")),
+		route("POST /api/email-outbox/{id}/retry", "EMAIL_RETRIED", AuditCategory.SCHEDULES, "EMAIL", "id", (body, name) -> "Sent a failed email again"),
+		route("POST /api/email-outbox/retry-failed", "EMAILS_RETRIED", AuditCategory.SCHEDULES, "EMAIL", null, (body, name) -> "Sent all failed emails again"),
 		route("POST /api/schedule-groups/{id}/bulk-upload", "SCHEDULE_IMPORTED", AuditCategory.SCHEDULES, "SCHEDULE_GROUP", "id", (body, name) ->
 			"Imported schedule from Excel into " + quote(name) + (body instanceof ScheduleBulkUploadResultDTO r
 				? ": " + r.roomAssignmentsCreated() + " exam rooms" : "")),

@@ -55,6 +55,8 @@ The full annotated list is in [`.env.example`](.env.example).
 | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | for Microsoft sign-in | From Microsoft Entra admin center > App registrations (Web platform). Redirect URI: `<APP_FRONTEND_URL>/api/auth/sso/microsoft/callback` |
 | `MICROSOFT_TENANT` | — | `organizations` (any work/school account, default), `common` (also personal accounts) or one organisation's tenant id |
 | `APP_SSO_CALLBACK_BASE_URL` | — | Only if the redirect URI must use another address than `APP_FRONTEND_URL` |
+| `MAIL_WORKER_ENABLED` | — | `true` (default): this server sends queued emails in the background. With several servers it can stay on everywhere (each email is taken by one server only) |
+| `MAIL_LOG_RETENTION_DAYS` | — | Days to keep the email delivery log (default 90). Sent emails keep no content |
 | `JWT_EXPIRATION_MINUTES`         | — | Access token lifetime, default 15 (renewed silently from the refresh cookie) |
 | `AUTH_COOKIE_SAME_SITE`          | — | `Lax` (default) when frontend and API share a site; `None` for different sites (HTTPS only) |
 | `AUTH_COOKIE_SECURE`             | — | `true` (default); `false` only for plain-http local development |

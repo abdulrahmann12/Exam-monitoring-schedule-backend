@@ -133,6 +133,11 @@ public final class Messages {
 	public static final String SSO_TENANT_INVALID = "The Microsoft tenant id is a code like 72f988bf-86f1-41af-91ab-2d7cd011db47 (Microsoft Entra admin center > Overview).";
 	public static final String SSO_PROVIDER_UNAVAILABLE = "This sign-in option is not set up on the server.";
 
+	// ==================== Email outbox ====================
+	public static final String EMAIL_NOT_FOUND = "Email not found.";
+	public static final String EMAIL_RETRY_ONLY_FAILED = "Only failed emails can be sent again.";
+	public static final String EMAIL_RETRY_ACCOUNT = "Invitation and password-reset emails contain one-time links and are not stored. Send a new invitation or reset instead.";
+
 	// ==================== Platform Owner Messages ====================
 	public static final String OWNER_UNIVERSITY_NOT_FOUND = "University not found.";
 	public static final String OWNER_SLUG_INVALID = "The short code may only use lowercase letters, digits and dashes (3 to 60 characters), and must start and end with a letter or digit.";

@@ -115,6 +115,8 @@ public class SecurityConfig {
 				.requestMatchers("/api/users", "/api/users/**").hasRole(ADMIN)
 				// Activity log: administrators only (it shows emails and IP addresses).
 				.requestMatchers("/api/audit-events", "/api/audit-events/**").hasRole(ADMIN)
+				// Email delivery log: whoever can send the schedules (it lists staff email addresses).
+				.requestMatchers("/api/email-outbox", "/api/email-outbox/**").hasAnyRole(ADMIN, SCHEDULER)
 				// System settings: everyone reads (branding), only administrators change.
 				.requestMatchers(HttpMethod.PUT, "/api/settings").hasRole(ADMIN)
 				// Reading schedules, people, rooms, … : every university role. Not the platform owner:

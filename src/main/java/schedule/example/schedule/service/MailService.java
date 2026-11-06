@@ -11,6 +11,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import schedule.example.schedule.config.Messages;
 import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Base64;
@@ -19,9 +20,10 @@ import java.util.List;
 @Service
 public class MailService {
 
-	private static final String BREVO_SMTP_EMAIL_URL = "https://api.brevo.com/v3/smtp/email";
+
 
 	private final RestTemplate restTemplate;
+	private final String apiUrl;
 	private final String apiKey;
 	private final String senderEmail;
 	private final String senderName;
@@ -29,8 +31,10 @@ public class MailService {
 	public MailService(
 		@Value("${app.brevo.api-key}") String apiKey,
 		@Value("${app.brevo.sender-email}") String senderEmail,
-		@Value("${app.brevo.sender-name:Uni-Guard Schedules}") String senderName
+		@Value("${app.brevo.sender-name:Uni-Guard Schedules}") String senderName,
+		@Value("${app.brevo.api-url:https://api.brevo.com/v3/smtp/email}") String apiUrl
 	) {
+		this.apiUrl = apiUrl;
 		SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
 		factory.setConnectTimeout(10_000);
 		factory.setReadTimeout(20_000);
@@ -45,11 +49,18 @@ public class MailService {
 		return apiKey != null && !apiKey.isBlank() && senderEmail != null && !senderEmail.isBlank();
 	}
 
-	public void sendHtml(String to, String subject, String htmlBody) {
-		sendHtmlWithPdf(to, subject, htmlBody, null, null);
+	/** @return the provider's message id (may be null) */
+	public String sendHtml(String to, String subject, String htmlBody) {
+		return sendHtmlWithPdf(to, subject, htmlBody, null, null);
 	}
 
-	public void sendHtmlWithPdf(String to, String subject, String htmlBody, String filename, byte[] pdf) {
+	/**
+	 * Hands one email to Brevo.
+	 *
+	 * @return the provider's message id (may be null)
+	 * @throws MailDeliveryException with {@code retryable} set for temporary problems
+	 */
+	public String sendHtmlWithPdf(String to, String subject, String htmlBody, String filename, byte[] pdf) {
 		if (!isConfigured()) {
 			throw new IllegalStateException(Messages.MAIL_NOT_CONFIGURED);
 		}
@@ -71,24 +82,44 @@ public class MailService {
 		headers.setContentType(MediaType.APPLICATION_JSON);
 		headers.setAccept(List.of(MediaType.APPLICATION_JSON));
 
+		ResponseEntity<String> response;
 		try {
-			ResponseEntity<String> response = restTemplate.exchange(
-				BREVO_SMTP_EMAIL_URL,
+			response = restTemplate.exchange(
+				apiUrl,
 				HttpMethod.POST,
 				new HttpEntity<>(payload, headers),
 				String.class
 			);
-			if (!response.getStatusCode().is2xxSuccessful()) {
-				throw new IllegalStateException("Brevo rejected email to " + to + " with status " + response.getStatusCode());
-			}
 		} catch (HttpStatusCodeException ex) {
-			throw new IllegalStateException(
-				"Failed to send email to " + to + " via Brevo: " + ex.getStatusCode() + " " + ex.getResponseBodyAsString(),
-				ex
-			);
+			int status = ex.getStatusCode().value();
+			// 429 (too many) and 5xx (provider trouble) go away by themselves; other 4xx do not.
+			boolean retryable = status == 429 || status >= 500;
+			throw new MailDeliveryException("Brevo answered " + status + ": " + shorten(ex.getResponseBodyAsString()), retryable, ex);
+		} catch (ResourceAccessException ex) {
+			throw new MailDeliveryException("Could not reach Brevo: " + ex.getMessage(), true, ex);
 		} catch (RuntimeException ex) {
-			throw new IllegalStateException("Failed to send email to " + to + " via Brevo", ex);
+			throw new MailDeliveryException("Could not send via Brevo: " + ex.getMessage(), true, ex);
 		}
+		if (!response.getStatusCode().is2xxSuccessful()) {
+			throw new MailDeliveryException("Brevo answered " + response.getStatusCode().value(), response.getStatusCode().is5xxServerError(), null);
+		}
+		return messageId(response.getBody());
+	}
+
+	private static String messageId(String body) {
+		if (body == null) {
+			return null;
+		}
+		java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("\"messageId\"\\s*:\\s*\"([^\"]{1,190})\"").matcher(body);
+		return matcher.find() ? matcher.group(1) : null;
+	}
+
+	private static String shorten(String text) {
+		if (text == null) {
+			return "";
+		}
+		String oneLine = text.replaceAll("\\s+", " ").trim();
+		return oneLine.length() <= 200 ? oneLine : oneLine.substring(0, 200) + "...";
 	}
 
 	@JsonInclude(JsonInclude.Include.NON_NULL)

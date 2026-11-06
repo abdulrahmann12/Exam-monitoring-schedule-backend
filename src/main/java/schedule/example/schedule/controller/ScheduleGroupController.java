@@ -94,8 +94,11 @@ public class ScheduleGroupController {
 	}
 
 	@PostMapping("/{id}/notify")
-	public ScheduleNotifyResponse notifyAssignedStaff(@PathVariable UUID id) {
-		return scheduleNotificationService.notifyAssignedStaff(id);
+	public ScheduleNotifyResponse notifyAssignedStaff(
+		@PathVariable UUID id,
+		@org.springframework.web.bind.annotation.RequestParam(defaultValue = "false") boolean resendAll
+	) {
+		return scheduleNotificationService.notifyAssignedStaff(id, resendAll);
 	}
 
 	@GetMapping("/{id}/bulk-template")

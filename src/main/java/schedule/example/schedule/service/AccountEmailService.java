@@ -16,7 +16,7 @@ import schedule.example.schedule.repository.SettingsRepository;
 import java.net.URI;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.concurrent.ExecutorService;
+
 import java.util.concurrent.Executors;
 
 /**
@@ -25,6 +25,9 @@ import java.util.concurrent.Executors;
  * <p>Sent in the background: the request returns at once, and "forgot password" takes the same time
  * whether or not the email belongs to an account. Without email configured, nothing is sent; in
  * local development ({@code app.account.log-links=true}) the link is written to the log instead.
+ *
+ * <p>Temporary provider problems are retried twice (after 30 seconds and 2 minutes). Each email
+ * appears in the delivery log, but its content is never stored: it contains a one-time link.
  */
 @Service
 public class AccountEmailService {
@@ -33,19 +36,23 @@ public class AccountEmailService {
 	private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'").withZone(ZoneOffset.UTC);
 
 	private final MailService mailService;
-	/** Two background senders are plenty for account emails. */
-	private final ExecutorService taskExecutor = Executors.newFixedThreadPool(2, runnable -> {
+	/** Two background senders are plenty for account emails (retries are scheduled, not slept). */
+	private final java.util.concurrent.ScheduledExecutorService taskExecutor = Executors.newScheduledThreadPool(2, runnable -> {
 		Thread thread = new Thread(runnable, "account-mail");
 		thread.setDaemon(true);
 		return thread;
 	});
+	private static final long[] RETRY_AFTER_SECONDS = {30, 120};
 	private final AccountLinkProperties properties;
 	private final SettingsRepository settingsRepository;
+	private final EmailOutboxService outbox;
 
-	public AccountEmailService(MailService mailService, AccountLinkProperties properties, SettingsRepository settingsRepository) {
+	public AccountEmailService(MailService mailService, AccountLinkProperties properties, SettingsRepository settingsRepository,
+		EmailOutboxService outbox) {
 		this.mailService = mailService;
 		this.properties = properties;
 		this.settingsRepository = settingsRepository;
+		this.outbox = outbox;
 	}
 
 	@PreDestroy
@@ -78,7 +85,7 @@ public class AccountEmailService {
 			"Choose my password", link.link(),
 			"This link works once and expires on " + WHEN.format(link.expiresAt()) + ". "
 				+ "If you did not expect this invitation, you can ignore this email.");
-		return send(user.getEmail(), subject, html, "invitation", link.link());
+		return send(user, subject, html, "invitation", schedule.example.schedule.entity.EmailMessage.KIND_INVITE, link.link());
 	}
 
 	public boolean sendPasswordReset(AdminUser user, AccountTokenService.Issued link) {
@@ -90,28 +97,69 @@ public class AccountEmailService {
 			"Reset my password", link.link(),
 			"This link works once and expires on " + WHEN.format(link.expiresAt()) + ". "
 				+ "If you did not ask for this, ignore this email — your password stays the same.");
-		return send(user.getEmail(), subject, html, "password reset", link.link());
+		return send(user, subject, html, "password reset", schedule.example.schedule.entity.EmailMessage.KIND_PASSWORD_RESET, link.link());
 	}
 
-	private boolean send(String to, String subject, String html, String kind, String link) {
+	private boolean send(AdminUser user, String subject, String html, String kind, String outboxKind, String link) {
+		String to = user.getEmail();
+		java.util.UUID universityId = user.getUniversityId();
+		String name = user.getDisplayName();
 		if (!mailService.isConfigured()) {
 			if (properties.logLinks()) {
 				LOGGER.warn("[MAIL-DEV] Email not configured. {} link for {}: {}", kind, to, link);
 			} else {
 				LOGGER.warn("[MAIL] Email not configured — could not send the {} email to {}.", kind, to);
 			}
+			// Recorded in the background as well, so "forgot password" keeps the same timing.
+			taskExecutor.execute(() -> {
+				java.util.UUID id = record(outboxKind, universityId, to, name, subject);
+				attemptRecorded(id, false, null, "Email is not set up on the server: share the link by hand.", true);
+			});
 			return false;
 		}
-		taskExecutor.execute(() -> {
-			try {
-				mailService.sendHtml(to, subject, html);
-				LOGGER.info("[MAIL] {} email sent to {}.", kind, to);
-			} catch (RuntimeException ex) {
-				// Never log the link itself here: production logs must not contain working links.
+		taskExecutor.execute(() -> attempt(record(outboxKind, universityId, to, name, subject), to, subject, html, kind, 1));
+		return true;
+	}
+
+	private void attempt(java.util.UUID id, String to, String subject, String html, String kind, int attemptNumber) {
+		try {
+			String messageId = mailService.sendHtml(to, subject, html);
+			attemptRecorded(id, true, messageId, null, true);
+			LOGGER.info("[MAIL] {} email sent to {}.", kind, to);
+		} catch (RuntimeException ex) {
+			boolean retryable = !(ex instanceof MailDeliveryException delivery) || delivery.retryable();
+			boolean again = retryable && attemptNumber <= RETRY_AFTER_SECONDS.length;
+			// Never log or store the link itself: production logs must not contain working links.
+			attemptRecorded(id, false, null, ex.getMessage(), !again);
+			if (again) {
+				LOGGER.warn("[MAIL] {} email to {} failed (attempt {}), retrying: {}", kind, to, attemptNumber, ex.getMessage());
+				taskExecutor.schedule(() -> attempt(id, to, subject, html, kind, attemptNumber + 1),
+					RETRY_AFTER_SECONDS[attemptNumber - 1], java.util.concurrent.TimeUnit.SECONDS);
+			} else {
 				LOGGER.error("[MAIL] Could not send the {} email to {}: {}", kind, to, ex.getMessage());
 			}
-		});
-		return true;
+		}
+	}
+
+	/** The delivery log must never stop an email from being sent. */
+	private java.util.UUID record(String kind, java.util.UUID universityId, String to, String name, String subject) {
+		try {
+			return outbox.recordAccountEmail(kind, universityId, to, name, subject);
+		} catch (RuntimeException ex) {
+			LOGGER.warn("[MAIL] Could not record the {} email to {} in the delivery log: {}", kind, to, ex.getMessage());
+			return null;
+		}
+	}
+
+	private void attemptRecorded(java.util.UUID id, boolean sent, String messageId, String error, boolean finalAttempt) {
+		if (id == null) {
+			return;
+		}
+		try {
+			outbox.recordAttempt(id, sent, messageId, error, finalAttempt);
+		} catch (RuntimeException ex) {
+			LOGGER.warn("[MAIL] Could not update the delivery log: {}", ex.getMessage());
+		}
 	}
 
 	private String appName(AdminUser user) {

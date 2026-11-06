@@ -58,27 +58,44 @@ public class ScheduleNotificationService {
 	private final SettingsRepository settingsRepository;
 	private final MailService mailService;
 	private final DemoModeService demoModeService;
+	private final EmailOutboxService outbox;
+	private final ScheduleWriteLock scheduleWriteLock;
 
 	public ScheduleNotificationService(
 		ScheduleGroupRepository scheduleGroupRepository,
 		RoomAssignmentRepository roomAssignmentRepository,
 		SettingsRepository settingsRepository,
 		MailService mailService,
-		DemoModeService demoModeService
+		DemoModeService demoModeService,
+		EmailOutboxService outbox,
+		ScheduleWriteLock scheduleWriteLock
 	) {
 		this.scheduleGroupRepository = scheduleGroupRepository;
 		this.roomAssignmentRepository = roomAssignmentRepository;
 		this.settingsRepository = settingsRepository;
 		this.mailService = mailService;
 		this.demoModeService = demoModeService;
+		this.outbox = outbox;
+		this.scheduleWriteLock = scheduleWriteLock;
 	}
 
-	public ScheduleNotifyResponse notifyAssignedStaff(UUID groupId) {
+	/**
+	 * Puts one email per assigned person (with their own PDF) into the outbox and returns at once;
+	 * the background worker sends them, retrying temporary failures.
+	 *
+	 * <p>Clicking twice sends nothing twice: a person whose schedule was already emailed unchanged is
+	 * skipped. After changes, only the people whose duties changed get a new email. {@code resendAll}
+	 * sends to everybody again.
+	 */
+	@org.springframework.transaction.annotation.Transactional
+	public ScheduleNotifyResponse notifyAssignedStaff(UUID groupId, boolean resendAll) {
 		demoModeService.rejectIfDemoUser("notify-schedule-group");
 		if (!mailService.isConfigured()) {
 			throw new BusinessRuleViolationException(Messages.MAIL_NOT_CONFIGURED);
 		}
 
+		// One "send" at a time per university, and the schedule cannot change while it is read.
+		scheduleWriteLock.acquire();
 		ScheduleGroup group = scheduleGroupRepository.findById(groupId)
 			.orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.SCHEDULE_GROUP_NOT_FOUND, groupId)));
 		Settings settings = settingsRepository.findById(TenantContext.require()).orElse(null);
@@ -92,11 +109,13 @@ public class ScheduleNotificationService {
 			}
 		}
 
-		int sent = 0;
+		int queued = 0;
 		int skipped = 0;
-		int failed = 0;
+		int unchanged = 0;
 		List<String> skippedNames = new ArrayList<>();
-		List<String> failedNames = new ArrayList<>();
+		UUID batchId = UUID.randomUUID();
+		UUID universityId = TenantContext.require();
+		String createdBy = currentUserEmail();
 
 		for (RecipientSchedule recipient : recipients.values()) {
 			recipient.duties.sort(DUTY_ORDER);
@@ -106,24 +125,46 @@ public class ScheduleNotificationService {
 				skippedNames.add(recipient.person.getName());
 				continue;
 			}
-
-			try {
-				mailService.sendHtmlWithPdf(
-					email,
-					buildSubject(settings, group),
-					buildHtmlBody(settings, group, recipient),
-					buildPdfFilename(group, recipient.person),
-					buildSchedulePdf(settings, group, recipient)
-				);
-				sent += 1;
-			} catch (RuntimeException ex) {
-				log.warn("Failed to notify '{}' <{}> for group '{}'", recipient.person.getName(), email, group.getName(), ex);
-				failed += 1;
-				failedNames.add(recipient.person.getName());
+			String dedupeKey = "SCHEDULE:" + group.getId() + ":" + recipient.person.getId();
+			String contentHash = contentHash(settings, group, recipient, email);
+			if (!resendAll && outbox.alreadySent(dedupeKey, contentHash, email.trim())) {
+				unchanged += 1;
+				continue;
 			}
+			outbox.queue(new EmailOutboxService.Outgoing(
+				dedupeKey,
+				contentHash,
+				email.trim(),
+				recipient.person.getName(),
+				buildSubject(settings, group),
+				buildHtmlBody(settings, group, recipient),
+				buildPdfFilename(group, recipient.person),
+				buildSchedulePdf(settings, group, recipient)
+			), universityId, batchId, createdBy);
+			queued += 1;
 		}
+		log.info("Queued {} schedule email(s) for '{}' ({} without email, {} unchanged).", queued, group.getName(), skipped, unchanged);
+		return new ScheduleNotifyResponse(queued, skipped, unchanged, List.copyOf(skippedNames), batchId);
+	}
 
-		return new ScheduleNotifyResponse(sent, skipped, failed, List.copyOf(skippedNames), List.copyOf(failedNames));
+	/** Fingerprint of what this person would receive (the PDF itself contains a timestamp, so it is not hashed). */
+	private static String contentHash(Settings settings, ScheduleGroup group, RecipientSchedule recipient, String email) {
+		StringBuilder canonical = new StringBuilder()
+			.append(email.trim().toLowerCase(Locale.ROOT)).append('|')
+			.append(recipient.person.getName()).append('|')
+			.append(group.getName()).append('|');
+		if (settings != null) {
+			canonical.append(settings.getSystemName()).append('|').append(settings.getUniversityName()).append('|').append(settings.getDepartment()).append('|');
+		}
+		for (DutyRow duty : recipient.duties) {
+			canonical.append(duty).append('\n');
+		}
+		return schedule.example.schedule.security.SecureTokens.sha256(canonical.toString());
+	}
+
+	private static String currentUserEmail() {
+		org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+		return auth == null ? null : auth.getName();
 	}
 
 	private static void addDuty(
