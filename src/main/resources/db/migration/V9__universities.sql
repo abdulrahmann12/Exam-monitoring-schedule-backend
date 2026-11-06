@@ -15,6 +15,13 @@ create table universities (
 
 create unique index ux_universities_slug on universities (slug);
 
+-- Older versions always stored the single settings row with this id. Make sure of it before linking it to
+-- the first university (a different id would break the foreign key below halfway through this script).
+-- Only when there is exactly one row; the derived table lets MySQL/MariaDB read the table being updated.
+update settings set id = 0x00000000000000000000000000000001
+where id <> 0x00000000000000000000000000000001
+  and (select n from (select count(*) as n from settings) as single_row) = 1;
+
 insert into universities (id, name, slug, active, created_at)
 select 0x00000000000000000000000000000001,
        coalesce((select s.university_name from settings s where s.id = 0x00000000000000000000000000000001), 'University'),
