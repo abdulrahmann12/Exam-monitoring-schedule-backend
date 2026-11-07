@@ -60,7 +60,7 @@ import com.uniguard.schedule.util.NameNormalizationUtil;
  * <ul>
  *   <li><b>Phase 1</b> — {@link #createBulkTemplate(UUID)} generates a {@code .xlsx} skeleton
  *       (Date, Time Slot, Room, Subject Name, Subject Code) with in-Excel dropdown/date
- *       validation scoped to the schedule group's time slots and the system's active rooms.</li>
+ *       validation against the shared time slots and the system's active rooms.</li>
  *   <li><b>Phase 2</b> — {@link #uploadBulkSchedule(UUID, MultipartFile)} parses the filled-in
  *       workbook, defensively validates every row against the database, and — only if every row
  *       is valid — creates the {@link RoomAssignment} rows and hands them to
@@ -98,7 +98,7 @@ public class ScheduleBulkUploadService {
 	public byte[] createBulkTemplate(UUID scheduleGroupId) {
 		ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
 
-		List<TimeSlot> slots = timeSlotRepository.findByScheduleGroupIdAndActiveTrueOrderBySortOrderAsc(group.getId());
+		List<TimeSlot> slots = timeSlotRepository.findByActiveTrueOrderBySortOrderAsc();
 		if (slots.isEmpty()) {
 			throw new ValidationException(Messages.SCHEDULE_BULK_TEMPLATE_NO_SLOTS);
 		}
@@ -267,7 +267,7 @@ public class ScheduleBulkUploadService {
 				.toList());
 		}
 
-		List<TimeSlot> groupSlots = timeSlotRepository.findByScheduleGroupIdAndActiveTrueOrderBySortOrderAsc(group.getId());
+		List<TimeSlot> groupSlots = timeSlotRepository.findByActiveTrueOrderBySortOrderAsc(); // shared by every exam period
 		Map<String, TimeSlot> slotsByTimes = new LinkedHashMap<>();
 		for (TimeSlot slot : groupSlots) {
 			slotsByTimes.putIfAbsent(timesKey(slot.getStartTime(), slot.getEndTime()), slot);
@@ -305,7 +305,6 @@ public class ScheduleBulkUploadService {
 			if (timeSlot == null) {
 				// Student-information systems do not know our slot names: create the slot (undone if the upload fails).
 				timeSlot = new TimeSlot();
-				timeSlot.setScheduleGroup(group);
 				timeSlot.setLabel("Exam " + times[0].format(SLOT_DISPLAY_TIME_FORMAT) + "–" + times[1].format(SLOT_DISPLAY_TIME_FORMAT));
 				timeSlot.setStartTime(times[0]);
 				timeSlot.setEndTime(times[1]);

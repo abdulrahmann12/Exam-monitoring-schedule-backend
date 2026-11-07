@@ -1,5 +1,7 @@
 package com.uniguard.schedule.dto.settings;
 
+import com.uniguard.schedule.service.SchedulingSettings;
+
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -51,6 +53,11 @@ public record SettingsRequest(
 	/** One invigilator per N students; 0 = use each room's minimum. */
 	@Min(value = 0, message = "Students per invigilator cannot be negative")
 	@Max(value = 1000, message = "Students per invigilator must be at most 1000")
-	Integer studentsPerInvigilator
+	Integer studentsPerInvigilator,
+
+	/** Rooms one chief invigilator may cover at the same time. Omit to keep the current value. */
+	@Min(value = 1, message = "A chief invigilator must be able to cover at least 1 room")
+	@Max(value = SchedulingSettings.MAX_CHIEF_PARALLEL_ROOMS, message = "A chief invigilator can cover at most 10 rooms at the same time")
+	Integer chiefMaxParallelRooms
 ) {
 }

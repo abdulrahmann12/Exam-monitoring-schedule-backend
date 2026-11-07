@@ -84,9 +84,13 @@ class MySqlUpgradeFromHibernateIT {
 		s.execute("INSERT INTO settings (id, app_tagline, department, exam_period, logo_url, system_name, theme, university_name) VALUES "
 			+ "(X'0000000000000000000000000000BEEF', 'Exams', 'Exam office', 'Fall 2026', NULL, 'Uni-Guard Schedules', 'LIGHT', 'Legacy University')");
 		s.execute("INSERT INTO schedule_groups (id, active, archived, created_at, description, name, updated_at, start_date, end_date) VALUES "
-			+ "(X'00000000000000000000000000000010', 1, 0, now(6), NULL, 'Fall 2026', now(6), '2027-01-10', '2027-01-20')");
+			+ "(X'00000000000000000000000000000010', 1, 0, now(6), NULL, 'Fall 2026', now(6), '2027-01-10', '2027-01-20'),"
+			+ "(X'00000000000000000000000000000011', 1, 0, now(6), NULL, 'Spring 2027', now(6), NULL, NULL)");
 		s.execute("INSERT INTO time_slots (id, active, created_at, end_time, label, sort_order, start_time, updated_at, schedule_group_id) VALUES "
-			+ "(X'00000000000000000000000000000020', 1, now(6), '12:00:00', 'Morning', 1, '09:00:00', now(6), X'00000000000000000000000000000010')");
+			+ "(X'00000000000000000000000000000020', 1, now(6), '12:00:00', 'Morning', 1, '09:00:00', now(6), X'00000000000000000000000000000010'),"
+			// Copies of "Morning" in the second exam period (V16 merges them into ...20):
+			+ "(X'00000000000000000000000000000021', 1, now(6), '12:00:00', 'Morning', 1, '09:00:00', now(6), X'00000000000000000000000000000011'),"
+			+ "(X'00000000000000000000000000000022', 0, now(6), '12:00:00', 'Morning', 2, '09:00:00', now(6), X'00000000000000000000000000000011')");
 		s.execute("INSERT INTO rooms (id, active, capacity, created_at, min_invigilators, name, normalized_name, type, updated_at) VALUES "
 			+ "(X'00000000000000000000000000000030', 1, 40, now(6), 1, 'Hall A', 'hall a', 'MEDIUM', now(6)),"
 			+ "(X'00000000000000000000000000000031', 1, 80, now(6), 2, 'Hall B', NULL, 'LARGE', now(6))");
@@ -100,7 +104,11 @@ class MySqlUpgradeFromHibernateIT {
 			+ "(X'00000000000000000000000000000045', now(6), '2027-01-12', 'old leave', '2027-01-11', now(6), X'00000000000000000000000000000041')");
 		s.execute("INSERT INTO room_assignments (id, created_at, exam_date, generation_version, is_locked, source, subject_code, subject_name, updated_at, chief_invigilator_id, room_id, schedule_group_id, time_slot_id) VALUES "
 			+ "(X'00000000000000000000000000000050', now(6), '2027-01-10', 1, 0, 'GENERATED', 'MATH101', 'Calculus', now(6), X'00000000000000000000000000000040', X'00000000000000000000000000000030', X'00000000000000000000000000000010', X'00000000000000000000000000000020'),"
-			+ "(X'00000000000000000000000000000051', now(6), '2027-01-11', 0, 1, 'MANUAL', NULL, NULL, now(6), NULL, X'00000000000000000000000000000031', NULL, X'00000000000000000000000000000020')");
+			+ "(X'00000000000000000000000000000051', now(6), '2027-01-11', 0, 1, 'MANUAL', NULL, NULL, now(6), NULL, X'00000000000000000000000000000031', NULL, X'00000000000000000000000000000020'),"
+			// Second period, on the copy ...21: the first can move onto ...20; the second would put two exams in
+			// Hall A on 2027-01-10 at the same slot as ...50, so it keeps its own slot.
+			+ "(X'00000000000000000000000000000052', now(6), '2027-01-12', 1, 0, 'GENERATED', NULL, NULL, now(6), NULL, X'00000000000000000000000000000030', X'00000000000000000000000000000011', X'00000000000000000000000000000021'),"
+			+ "(X'00000000000000000000000000000053', now(6), '2027-01-10', 1, 0, 'GENERATED', NULL, NULL, now(6), NULL, X'00000000000000000000000000000030', X'00000000000000000000000000000011', X'00000000000000000000000000000021')");
 		s.execute("INSERT INTO invigilator_assignments (id, created_at, position_index, required, invigilator_id, room_assignment_id) VALUES "
 			+ "(X'00000000000000000000000000000060', now(6), 0, 1, X'00000000000000000000000000000041', X'00000000000000000000000000000050'),"
 			+ "(X'00000000000000000000000000000061', now(6), 1, 1, NULL, X'00000000000000000000000000000050')");
@@ -133,7 +141,7 @@ class MySqlUpgradeFromHibernateIT {
 		// Every row is still there.
 		assertThat(count(jdbcTemplate, "people")).isEqualTo(3);
 		assertThat(count(jdbcTemplate, "rooms")).isEqualTo(2);
-		assertThat(count(jdbcTemplate, "room_assignments")).isEqualTo(2);
+		assertThat(count(jdbcTemplate, "room_assignments")).isEqualTo(4);
 		assertThat(count(jdbcTemplate, "invigilator_assignments")).isEqualTo(2);
 		assertThat(count(jdbcTemplate, "person_available_days")).isEqualTo(3);
 		assertThat(count(jdbcTemplate, "person_schedule_exceptions")).isEqualTo(1); // old table left untouched
@@ -152,6 +160,19 @@ class MySqlUpgradeFromHibernateIT {
 		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM admin_users WHERE email IN ('admin@legacy.test', 'demo@uniguard.com') AND university_id = " + UNI, Integer.class)).isEqualTo(2);
 		assertThat(jdbcTemplate.queryForObject("SELECT role FROM admin_users WHERE email = 'admin@legacy.test'", String.class)).isEqualTo("ADMIN");
 		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM admin_users WHERE role = 'SUPER_ADMIN' AND university_id IS NULL", Integer.class)).isEqualTo(1);
+
+		// V16: time slots are shared. The unused copy is gone, assignments moved where that is safe,
+		// and the one that would have clashed kept its own slot.
+		assertThat(count(jdbcTemplate, "time_slots")).isEqualTo(2);
+		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM time_slots WHERE id IN (X'00000000000000000000000000000020', X'00000000000000000000000000000021')", Integer.class))
+			.isEqualTo(2);
+		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM time_slots WHERE schedule_group_id IS NOT NULL", Integer.class)).isZero();
+		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM room_assignments WHERE id = X'00000000000000000000000000000052' AND time_slot_id = X'00000000000000000000000000000020'", Integer.class))
+			.isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM room_assignments WHERE id = X'00000000000000000000000000000053' AND time_slot_id = X'00000000000000000000000000000021'", Integer.class))
+			.isEqualTo(1);
+		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE LOWER(table_name) LIKE 'v16_%'", Integer.class)).isZero();
+		assertThat(jdbcTemplate.queryForObject("SELECT chief_max_parallel_rooms FROM settings WHERE id = " + UNI, Integer.class)).isEqualTo(2);
 
 		Integer versionColumns = jdbcTemplate.queryForObject("""
 			SELECT COUNT(*) FROM information_schema.columns

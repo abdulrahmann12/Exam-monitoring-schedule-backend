@@ -16,6 +16,7 @@ public record SettingsResponse(
 	int maxDutiesPerDay,
 	int maxDutiesPerPeriod,
 	int minRestMinutes,
-	int studentsPerInvigilator
+	int studentsPerInvigilator,
+	int chiefMaxParallelRooms
 ) {
 }

@@ -1,5 +1,7 @@
 package com.uniguard.schedule.entity;
 
+import com.uniguard.schedule.service.SchedulingSettings;
+
 import org.hibernate.annotations.TenantId;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -82,4 +84,9 @@ public class Settings {
 	@Builder.Default
 	@Column(name = "students_per_invigilator", nullable = false)
 	private int studentsPerInvigilator = 0;
+
+	/** How many rooms one chief invigilator may cover at the same time (invigilators: always 1). */
+	@Builder.Default
+	@Column(name = "chief_max_parallel_rooms", nullable = false)
+	private int chiefMaxParallelRooms = SchedulingSettings.DEFAULT_CHIEF_PARALLEL_ROOMS;
 }

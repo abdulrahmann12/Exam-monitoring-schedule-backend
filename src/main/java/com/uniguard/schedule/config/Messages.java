@@ -178,7 +178,6 @@ public final class Messages {
 	public static final String SLOT_INACTIVE = "Time slot is inactive and cannot be used for new assignments.";
 	public static final String SLOT_DELETE_IN_USE = "Time slot ''{0}'' at {1} is referenced by existing assignments and cannot be deleted. Use deactivate instead.";
 	public static final String SLOT_INVALID_RANGE = "End time must be after start time.";
-	public static final String SLOT_CANNOT_CHANGE_GROUP = "A time slot cannot be moved to a different schedule group.";
 
 	// ==================== Assignment Messages ====================
 	public static final String ASSIGNMENT_NOT_FOUND = "Assignment with id {0} was not found.";
@@ -193,7 +192,6 @@ public final class Messages {
 	public static final String ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED = "Invigilator ''{0}'' is already assigned at an overlapping time.";
 	public static final String ASSIGNMENT_CHIEF_UNAVAILABLE = "Chief invigilator ''{0}'' is unavailable on {1} ({2}).";
 	public static final String ASSIGNMENT_INVIGILATOR_UNAVAILABLE = "Invigilator ''{0}'' is unavailable on {1} ({2}).";
-	public static final String ASSIGNMENT_SLOT_GROUP_MISMATCH = "Time slot does not belong to schedule group ''{0}''.";
 	public static final String ASSIGNMENT_BULK_MIXED_GROUPS = "Bulk save cannot mix assignments from different schedule groups.";
 	public static final String ASSIGNMENT_GROUP_REQUIRED = "Assignment is missing a schedule group.";
 	public static final String ASSIGNMENT_ROOM_OVERLAP = "Room ''{0}'' is already booked on {1} at an overlapping time ({2}).";

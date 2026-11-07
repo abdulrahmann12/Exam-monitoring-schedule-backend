@@ -111,7 +111,11 @@ public class Person {
         @Column(nullable = false)
         private boolean active = true;
 
-        /** Max rooms per time slot: 2 for CHIEF_INVIGILATOR, 1 for INVIGILATOR. Set via setRole(). */
+        /**
+         * Legacy role default (2 for CHIEF_INVIGILATOR, 1 for INVIGILATOR), kept for old API clients.
+         * The scheduling rules do NOT use it: the chief limit is the university setting
+         * {@code chief_max_parallel_rooms} (see {@code SchedulingSettings#parallelRoomsFor}).
+         */
         @Builder.Default
         @Column(nullable = false)
         private int maxParallelRooms = 1;

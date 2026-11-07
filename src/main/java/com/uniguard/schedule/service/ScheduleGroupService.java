@@ -59,16 +59,14 @@ public class ScheduleGroupService {
 		String namePrefix = (name != null && !name.isBlank()) ? name.trim() : null;
 		Page<ScheduleGroup> page = scheduleGroupRepository.search(namePrefix, activeOnly, pageable);
 		List<UUID> groupIds = page.getContent().stream().map(ScheduleGroup::getId).toList();
-		Map<UUID, Long> slotCounts = groupIds.isEmpty()
-			? Map.of()
-			: toCountMap(timeSlotRepository.countByScheduleGroupIdIn(groupIds));
+		long sharedSlots = timeSlotRepository.count(); // time slots are shared by every exam period
 		Map<UUID, Long> assignmentCounts = groupIds.isEmpty()
 			? Map.of()
 			: toCountMap(roomAssignmentRepository.countByScheduleGroupIdIn(groupIds));
 
 		Page<ScheduleGroupResponse> mapped = page.map(group -> scheduleGroupMapper.toResponse(
 			group,
-			slotCounts.getOrDefault(group.getId(), 0L),
+			sharedSlots,
 			assignmentCounts.getOrDefault(group.getId(), 0L)
 		));
 		return PageResponse.from(mapped);
@@ -78,7 +76,7 @@ public class ScheduleGroupService {
 		ScheduleGroup group = getGroupEntity(id);
 		return scheduleGroupMapper.toResponse(
 			group,
-			timeSlotRepository.countByScheduleGroupId(id),
+			timeSlotRepository.count(),
 			roomAssignmentRepository.countByScheduleGroupId(id)
 		);
 	}
@@ -93,7 +91,7 @@ public class ScheduleGroupService {
 		group.setActive(request.active() == null || request.active());
 		group.setArchived(false);
 		ScheduleGroup saved = scheduleGroupRepository.save(group);
-		return scheduleGroupMapper.toResponse(saved, 0, 0);
+		return scheduleGroupMapper.toResponse(saved, timeSlotRepository.count(), 0);
 	}
 
 	@Transactional
@@ -112,14 +110,14 @@ public class ScheduleGroupService {
 		syncExamPeriodIfDefault(saved);
 		return scheduleGroupMapper.toResponse(
 			saved,
-			timeSlotRepository.countByScheduleGroupId(id),
+			timeSlotRepository.count(),
 			roomAssignmentRepository.countByScheduleGroupId(id)
 		);
 	}
 
 	/**
-	 * Deletes a group and that group's time slots and assignments only.
-	 * People and rooms are left untouched. The last remaining group cannot be removed.
+	 * Deletes a group and that group's assignments only.
+	 * People, rooms and time slots are shared by every exam period and are left untouched. The last remaining group cannot be removed.
 	 */
 	@Transactional
 	public void deleteScheduleGroup(UUID id) {
@@ -136,7 +134,6 @@ public class ScheduleGroupService {
 		decrementWorkload(assignments);
 		roomAssignmentRepository.deleteAll(assignments);
 		roomAssignmentRepository.flush();
-		timeSlotRepository.deleteByScheduleGroupId(id);
 		scheduleGroupRepository.delete(group);
 
 		if (wasDefault) {

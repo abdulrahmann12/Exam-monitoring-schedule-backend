@@ -169,6 +169,38 @@ class SchedulingIntegrationTest {
 		assertThat(roomAssignmentRepository.count()).isEqualTo(2);
 	}
 
+	@Test
+	void theChiefParallelRoomLimitComesFromTheSettings() {
+		ScheduleGroup g = group("Parallel setting");
+		TimeSlot slot = slot(g, 9, 12);
+		Person chief = chief("Setting Chief");
+		try {
+			setChiefMaxParallelRooms(3);
+			create(g, slot, room("S1"), chief);
+			create(g, slot, room("S2"), chief);
+			create(g, slot, room("S3"), chief);
+			Room fourth = room("S4");
+			assertThatThrownBy(() -> create(g, slot, fourth, chief))
+				.isInstanceOf(com.uniguard.schedule.exception.ConflictException.class)
+				.hasMessageContaining("maximum number of rooms");
+
+			setChiefMaxParallelRooms(1);
+			TimeSlot later = slot(g, 13, 15);
+			create(g, later, room("S5"), chief);
+			Room sixth = room("S6");
+			assertThatThrownBy(() -> create(g, later, sixth, chief)).hasMessageContaining("maximum number of rooms");
+		} finally {
+			setChiefMaxParallelRooms(SchedulingSettings.DEFAULT_CHIEF_PARALLEL_ROOMS);
+		}
+	}
+
+	private void setChiefMaxParallelRooms(int value) {
+		settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID).ifPresent(settings -> {
+			settings.setChiefMaxParallelRooms(value);
+			settingsRepository.save(settings);
+		});
+	}
+
 	@AfterEach
 	void cleanUp() {
 		roomAssignmentRepository.deleteAll();
@@ -258,7 +290,7 @@ class SchedulingIntegrationTest {
 		create(g, morning, hall, chief("C1"));
 		create(g, slot(g, 10, 12), hall, chief("C2"));
 
-		TimeSlotRequest stretch = new TimeSlotRequest(g.getId(), morning.getLabel(), LocalTime.of(8, 0), LocalTime.of(11, 0), morning.getSortOrder());
+		TimeSlotRequest stretch = new TimeSlotRequest(morning.getLabel(), LocalTime.of(8, 0), LocalTime.of(11, 0), morning.getSortOrder());
 		assertThatThrownBy(() -> timeSlotService.updateTimeSlot(morning.getId(), stretch))
 			.isInstanceOf(ConflictException.class)
 			.hasMessageContaining("Hall");
@@ -430,8 +462,7 @@ class SchedulingIntegrationTest {
 	}
 
 	private TimeSlot slot(ScheduleGroup group, int startHour, int endHour) {
-		return timeSlotRepository.save(TimeSlot.builder()
-			.scheduleGroup(group)
+		return timeSlotRepository.save(TimeSlot.builder() // shared by every exam period
 			.label(startHour + "-" + endHour)
 			.startTime(LocalTime.of(startHour, 0))
 			.endTime(LocalTime.of(endHour, 0))

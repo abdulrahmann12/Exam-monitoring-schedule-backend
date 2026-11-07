@@ -236,7 +236,7 @@ public class StaffConcurrencyRules {
 
         if (asChief) {
             int parallel = countOverlappingChiefRooms(context.universe(), current, person.getId());
-            if (parallel >= person.getMaxParallelRooms()) {
+            if (parallel >= context.settings().parallelRoomsFor(person)) {
                 return Optional.of(MessageFormat.format(Messages.ASSIGNMENT_CHIEF_LIMIT, person.getName()));
             }
         } else if (countOverlappingInvigilatorRooms(context.universe(), current, person.getId()) >= 1) {

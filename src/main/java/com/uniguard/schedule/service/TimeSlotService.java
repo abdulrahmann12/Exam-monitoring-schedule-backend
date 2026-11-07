@@ -38,13 +38,12 @@ public class TimeSlotService {
     private final RoomAssignmentRepository roomAssignmentRepository;
     private final TimeSlotMapper timeSlotMapper;
     private final DemoModeService demoModeService;
-    private final ScheduleGroupSupport scheduleGroupSupport;
     private final ScheduleWriteLock scheduleWriteLock;
     private final SchedulingContextLoader contextLoader;
 
-    public PageResponse<TimeSlotResponse> getTimeSlots(UUID scheduleGroupId, String label, Boolean activeOnly, Pageable pageable) {
-        UUID groupId = scheduleGroupSupport.requireGroup(scheduleGroupId).getId();
-        Page<TimeSlotResponse> page = timeSlotRepository.search(groupId, label, activeOnly, pageable)
+    /** Time slots are shared by every exam period of the university, like people and rooms. */
+    public PageResponse<TimeSlotResponse> getTimeSlots(String label, Boolean activeOnly, Pageable pageable) {
+        Page<TimeSlotResponse> page = timeSlotRepository.search(label, activeOnly, pageable)
                 .map(timeSlotMapper::toResponse);
         return PageResponse.from(page);
     }
@@ -53,7 +52,6 @@ public class TimeSlotService {
     public TimeSlotResponse createTimeSlot(@Valid TimeSlotRequest request) {
         validateTimeRange(request);
         TimeSlot timeSlot = timeSlotMapper.toEntity(request);
-        timeSlot.setScheduleGroup(scheduleGroupSupport.requireGroup(request.scheduleGroupId()));
         return timeSlotMapper.toResponse(timeSlotRepository.save(timeSlot));
     }
 
@@ -61,11 +59,6 @@ public class TimeSlotService {
     public TimeSlotResponse updateTimeSlot(UUID id, @Valid TimeSlotRequest request) {
         validateTimeRange(request);
         TimeSlot timeSlot = getTimeSlotEntity(id);
-        if (request.scheduleGroupId() != null
-                && timeSlot.getScheduleGroup() != null
-                && !request.scheduleGroupId().equals(timeSlot.getScheduleGroup().getId())) {
-            throw new ConflictException(Messages.SLOT_CANNOT_CHANGE_GROUP);
-        }
         boolean timesChanged = !request.startTime().equals(timeSlot.getStartTime())
                 || !request.endTime().equals(timeSlot.getEndTime());
         if (timesChanged) {

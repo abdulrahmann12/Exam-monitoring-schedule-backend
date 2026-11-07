@@ -201,7 +201,7 @@ class TimetableImportTest {
 
 	@Test
 	void oneBadRowMeansNothingIsSavedNotEvenNewTimeSlots() throws Exception {
-		int slotsBefore = slots.findByScheduleGroupIdAndActiveTrueOrderBySortOrderAsc(UUID.fromString(groupId)).size();
+		int slotsBefore = slots.findByActiveTrueOrderBySortOrderAsc().size();
 		String csv = """
 			Exam Date,Exam Start Time,Exam End Time,Room,Course Code,Enrollment
 			2027-01-14,08:00,10:00,Hall A,ENG101,20
@@ -214,7 +214,7 @@ class TimetableImportTest {
 			.andReturn().getResponse().getContentAsString();
 		assertThat(body).contains("Unknown Room").contains("must end after it starts").contains("8 o'clock").contains("500");
 		assertThat(imported()).isEmpty();
-		assertThat(slots.findByScheduleGroupIdAndActiveTrueOrderBySortOrderAsc(UUID.fromString(groupId))).hasSize(slotsBefore);
+		assertThat(slots.findByActiveTrueOrderBySortOrderAsc()).hasSize(slotsBefore);
 	}
 
 	@Test

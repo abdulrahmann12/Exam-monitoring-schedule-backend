@@ -86,7 +86,8 @@ public class SettingsService {
 			response.maxDutiesPerDay(),
 			response.maxDutiesPerPeriod(),
 			response.minRestMinutes(),
-			response.studentsPerInvigilator()
+			response.studentsPerInvigilator(),
+			response.chiefMaxParallelRooms()
 		);
 	}
 }

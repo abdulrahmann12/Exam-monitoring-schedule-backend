@@ -112,9 +112,6 @@ public class AutoAssignmentService {
 		ScheduleGroup group = scheduleGroupSupport.requireGroup(request.scheduleGroupId());
 		TimeSlot slot = timeSlotRepository.findById(request.slotId())
 			.orElseThrow(() -> new NotFoundException(MessageFormat.format(Messages.SLOT_NOT_FOUND, request.slotId())));
-		if (slot.getScheduleGroup() != null && !slot.getScheduleGroup().getId().equals(group.getId())) {
-			throw new ConflictException(MessageFormat.format(Messages.ASSIGNMENT_SLOT_GROUP_MISMATCH, group.getName()));
-		}
 		if (!slot.isActive()) {
 			throw new ValidationException(Messages.SLOT_INACTIVE);
 		}
@@ -270,7 +267,7 @@ public class AutoAssignmentService {
 			Person chief = ordered.get(p);
 			// Rooms already held at this time (outside these empty seats) reduce what is left.
 			int held = StaffConcurrencyRules.countOverlappingChiefRooms(context.universe(), seats.getFirst(), chief.getId());
-			capacity[p] = Math.max(chief.getMaxParallelRooms() - held, 0);
+			capacity[p] = Math.max(context.settings().parallelRoomsFor(chief) - held, 0);
 		}
 		List<List<Integer>> candidates = new ArrayList<>(seats.size());
 		for (RoomAssignment seat : seats) {

@@ -15,7 +15,6 @@ import com.uniguard.schedule.exception.NotFoundException;
 import com.uniguard.schedule.repository.RoomAssignmentRepository;
 import com.uniguard.schedule.repository.ScheduleGroupRepository;
 import com.uniguard.schedule.repository.SettingsRepository;
-import com.uniguard.schedule.repository.TimeSlotRepository;
 import com.uniguard.schedule.tenant.TenantContext;
 
 import java.text.MessageFormat;
@@ -32,17 +31,15 @@ public class ScheduleGroupSupport {
 
 	private final ScheduleGroupRepository scheduleGroupRepository;
 	private final SettingsRepository settingsRepository;
-	private final TimeSlotRepository timeSlotRepository;
 	private final RoomAssignmentRepository roomAssignmentRepository;
 
 	@Transactional
 	public void ensureDefaultGroupAndAttachOrphans() {
 		ScheduleGroup group = getOrCreateDefaultGroup();
-		int slots = timeSlotRepository.attachOrphansToGroup(group);
 		int assignments = roomAssignmentRepository.attachOrphansToGroup(group);
-		if (slots > 0 || assignments > 0) {
-			LOGGER.warn("[SCHEDULE-GROUP] Attached orphan rows to group '{}' (id={}): {} time slot(s), {} assignment(s).",
-					group.getName(), group.getId(), slots, assignments);
+		if (assignments > 0) {
+			LOGGER.warn("[SCHEDULE-GROUP] Attached {} orphan assignment(s) to group '{}' (id={}).",
+					assignments, group.getName(), group.getId());
 		}
 	}
 
