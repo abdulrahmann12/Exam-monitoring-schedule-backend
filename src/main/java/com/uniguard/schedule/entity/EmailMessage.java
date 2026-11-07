@@ -47,6 +47,8 @@ public class EmailMessage {
 	public static final String KIND_SCHEDULE = "SCHEDULE";
 	public static final String KIND_INVITE = "INVITE";
 	public static final String KIND_PASSWORD_RESET = "PASSWORD_RESET";
+	public static final String KIND_EMAIL_CHANGE = "EMAIL_CHANGE";
+	public static final String KIND_SECURITY_NOTICE = "SECURITY_NOTICE";
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.UUID)

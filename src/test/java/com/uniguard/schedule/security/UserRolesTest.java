@@ -181,6 +181,28 @@ class UserRolesTest {
 	}
 
 	@Test
+	void everyoneCanChangeTheirOwnNameOnly() throws Exception {
+		String viewer = token(VIEWER);
+		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"  Nour   Ahmed \"}"))
+			.andExpect(status().isNoContent());
+		mockMvc.perform(authed(get("/api/auth/me"), viewer)).andExpect(jsonPath("$.displayName").value("Nour Ahmed"));
+		assertThat(users.findByEmailIgnoreCase(ADMIN).orElseThrow().getDisplayName()).isNotEqualTo("Nour Ahmed");
+
+		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"   \"}")).andExpect(status().isBadRequest());
+		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"%s\"}".formatted("a".repeat(121))))
+			.andExpect(status().isBadRequest());
+		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"bad\\u0007name\"}")).andExpect(status().isBadRequest());
+		mockMvc.perform(authed(get("/api/auth/me"), viewer)).andExpect(jsonPath("$.displayName").value("Nour Ahmed"));
+	}
+
+	@Test
+	void changingTheNameNeedsASignIn() throws Exception {
+		mockMvc.perform(put("/api/auth/profile").header(CSRF_HEADER, "XMLHttpRequest")
+				.contentType(MediaType.APPLICATION_JSON).content("{\"displayName\":\"X\"}"))
+			.andExpect(status().isUnauthorized());
+	}
+
+	@Test
 	void changePasswordWithAnOversizedPasswordIsA400NotA500() throws Exception {
 		mockMvc.perform(json(post("/api/auth/change-password"), token(ADMIN), """
 				{"currentPassword":"%s","newPassword":"%s"}

@@ -91,6 +91,9 @@ public final class Messages {
 	public static final String AUTH_CURRENT_PASSWORD_WRONG = "Current password is incorrect.";
 	public static final String MAIL_NOT_CONFIGURED = "Email sending is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL on the server.";
 	public static final String AUTH_ACCOUNT_LOCKED = "This account is locked after too many failed sign-in attempts. Try again after {0}, or ask your administrator to reset it.";
+	public static final String EMAIL_CHANGE_SAME = "This is already your sign-in email.";
+	public static final String EMAIL_CHANGE_NO_MAIL = "Email is not set up on the server, so the new address cannot be confirmed. Ask the server administrator to set up email first.";
+	public static final String PROFILE_NAME_INVALID = "Enter a name of 1 to 120 characters.";
 	public static final String AUTH_PASSWORD_UNCHANGED = "The new password must be different from the current one.";
 	public static final String AUTH_PASSWORD_TOO_SHORT = "Password must be at least {0} characters.";
 	public static final String AUTH_PASSWORD_TOO_LONG = "Password is too long (maximum {0} bytes; non-Latin letters count as 2 or 3).";

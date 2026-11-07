@@ -21,6 +21,12 @@ import com.uniguard.schedule.audit.AuditService;
 import com.uniguard.schedule.config.Messages;
 import com.uniguard.schedule.exception.AccountLockedException;
 import com.uniguard.schedule.dto.auth.ChangePasswordRequest;
+import com.uniguard.schedule.dto.auth.UpdateProfileRequest;
+import com.uniguard.schedule.config.AccountLinkProperties;
+import com.uniguard.schedule.dto.auth.EmailChangeRequest;
+import com.uniguard.schedule.dto.auth.EmailChangeStartedResponse;
+import com.uniguard.schedule.exception.DuplicateResourceException;
+import java.util.Locale;
 import com.uniguard.schedule.dto.auth.LoginRequest;
 import com.uniguard.schedule.entity.AdminUser;
 import com.uniguard.schedule.entity.enums.AdminRole;
@@ -49,6 +55,9 @@ public class AuthService {
 	private final AuditService auditService;
 	private final AdminUserDetailsService adminUserDetailsService;
 	private final TwoFactorService twoFactorService;
+	private final AccountTokenService accountTokenService;
+	private final AccountEmailService accountEmailService;
+	private final AccountLinkProperties accountLinkProperties;
 
 	/** Everything the controller needs to set the two cookies. */
 	public record SignedIn(String email, String accessToken, Instant accessExpiresAt, String refreshToken, Instant sessionExpiresAt) {
@@ -203,9 +212,59 @@ public class AuthService {
 		admin.setTokenVersion(admin.getTokenVersion() + 1);
 		adminUserRepository.save(admin);
 		sessionService.keepOnly(admin.getId(), currentSessionId, admin.getTokenVersion());
+		accountTokenService.cancelEmailChange(admin.getId());
 		LOGGER.info("[AUTH] Password changed — all other sessions revoked for '{}'.", admin.getEmail());
 		auditService.recordAfterCommit(authEvent("PASSWORD_CHANGED", AuditCategory.AUTH, "Changed own password (other devices signed out)"));
 		return accessToken(admin, currentSessionId);
+	}
+
+	/**
+	 * Starts a change of the sign-in email. Nothing changes yet: a one-time link goes to the new
+	 * address (proving the person can read it) and a notice goes to the current one.
+	 */
+	@Transactional
+	public EmailChangeStartedResponse requestEmailChange(String email, @Valid EmailChangeRequest request) {
+		AdminUser user = requireAdmin(email);
+		if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {
+			auditService.record(authEvent("EMAIL_CHANGE_REQUESTED", AuditCategory.SECURITY,
+				"Tried to change the sign-in email with a wrong password").withOutcome(AuditEntry.Outcome.FAILURE));
+			throw new ValidationException(Messages.AUTH_CURRENT_PASSWORD_WRONG);
+		}
+		String newEmail = request.newEmail().trim().toLowerCase(Locale.ROOT);
+		if (newEmail.equalsIgnoreCase(user.getEmail())) {
+			throw new ValidationException(Messages.EMAIL_CHANGE_SAME);
+		}
+		if (adminUserRepository.findByEmailIgnoreCase(newEmail).isPresent()) {
+			throw new DuplicateResourceException(Messages.USER_EMAIL_EXISTS);
+		}
+		boolean canEmail = accountEmailService.canSend();
+		if (!canEmail && !accountLinkProperties.logLinks()) {
+			throw new ValidationException(Messages.EMAIL_CHANGE_NO_MAIL);
+		}
+		AccountTokenService.Issued link = accountTokenService.issueEmailChange(user, newEmail);
+		boolean sent = accountEmailService.sendEmailChangeConfirmation(user, newEmail, link);
+		accountEmailService.sendEmailChangeNotice(user, newEmail);
+		auditService.recordAfterCommit(authEvent("EMAIL_CHANGE_REQUESTED", AuditCategory.SECURITY,
+			"Asked to change the sign-in email to " + newEmail + " (waiting for confirmation)"));
+		// Local development without email only: hand the link back so the change can be tried out.
+		String devLink = !sent && accountLinkProperties.logLinks() ? link.link() : null;
+		return new EmailChangeStartedResponse(newEmail, link.expiresAt(), sent, devLink);
+	}
+
+	/** Changes the signed-in person's own name. Sessions stay as they are. */
+	@Transactional
+	public void updateProfile(String email, @Valid UpdateProfileRequest request) {
+		AdminUser user = requireAdmin(email);
+		String name = request.displayName() == null ? "" : request.displayName().strip().replaceAll("\\s+", " ");
+		if (name.isEmpty() || name.length() > 120 || name.codePoints().anyMatch(Character::isISOControl)) {
+			throw new ValidationException(Messages.PROFILE_NAME_INVALID);
+		}
+		if (name.equals(user.getDisplayName())) {
+			return;
+		}
+		user.setDisplayName(name);
+		adminUserRepository.save(user);
+		auditService.recordAfterCommit(authEvent("PROFILE_UPDATED", AuditCategory.USERS, "Changed own name"));
 	}
 
 	private static AuditEntry authEvent(String action, AuditCategory category, String summary) {

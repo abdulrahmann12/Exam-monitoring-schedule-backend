@@ -44,4 +44,9 @@ public record AccountLinkProperties(
 	public String passwordLink(String token) {
 		return frontendBaseUrl + "/reset-password#token=" + token;
 	}
+
+	/** The page that confirms a new sign-in email. Same '#' rule as above. */
+	public String emailChangeLink(String token) {
+		return frontendBaseUrl + "/confirm-email#token=" + token;
+	}
 }
