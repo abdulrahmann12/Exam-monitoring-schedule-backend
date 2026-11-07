@@ -92,6 +92,15 @@ public class TimeSlotService {
         return timeSlotMapper.toResponse(timeSlotRepository.save(timeSlot));
     }
 
+    /** Makes a deactivated slot usable again. */
+    @Transactional
+    public TimeSlotResponse activateTimeSlot(UUID id) {
+        demoModeService.rejectIfDemoUser("activate-time-slot");
+        TimeSlot timeSlot = getTimeSlotEntity(id);
+        timeSlot.setActive(true);
+        return timeSlotMapper.toResponse(timeSlotRepository.save(timeSlot));
+    }
+
     /**
      * Moving a slot's start/end can make its assignments overlap others (same room, same staff).
      * Re-runs the full rule set on every assignment that uses the slot, with the new times applied.

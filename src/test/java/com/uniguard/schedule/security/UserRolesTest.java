@@ -35,6 +35,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -193,6 +194,25 @@ class UserRolesTest {
 			.andExpect(status().isBadRequest());
 		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"bad\\u0007name\"}")).andExpect(status().isBadRequest());
 		mockMvc.perform(authed(get("/api/auth/me"), viewer)).andExpect(jsonPath("$.displayName").value("Nour Ahmed"));
+	}
+
+	@Test
+	void aDeactivatedTimeSlotCanBeActivatedAgainButNotByAViewer() throws Exception {
+		String scheduler = token(SCHEDULER);
+		String body = mockMvc.perform(json(post("/api/slots"), scheduler, """
+				{"label":"Roles slot","startTime":"07:00","endTime":"08:00","sortOrder":99}
+				"""))
+			.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+		String id = objectMapper.readTree(body).get("id").asText();
+		try {
+			mockMvc.perform(authed(patch("/api/slots/" + id + "/deactivate"), scheduler))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.active").value(false));
+			mockMvc.perform(authed(patch("/api/slots/" + id + "/activate"), token(VIEWER))).andExpect(status().isForbidden());
+			mockMvc.perform(authed(patch("/api/slots/" + id + "/activate"), scheduler))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.active").value(true));
+		} finally {
+			mockMvc.perform(authed(delete("/api/slots/" + id), scheduler)).andExpect(status().isNoContent());
+		}
 	}
 
 	@Test

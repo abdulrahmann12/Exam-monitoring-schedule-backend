@@ -170,6 +170,47 @@ class SchedulingIntegrationTest {
 	}
 
 	@Test
+	void differentSlotsThatOverlapInTimeCannotShareAnInvigilator() {
+		ScheduleGroup g = group("Overlap by time");
+		TimeSlot period1 = slotAt(8, 0, 9, 30);   // 08:00-09:30
+		TimeSlot morning = slotAt(9, 0, 12, 0);   // 09:00-12:00, overlaps 09:00-09:30
+		TimeSlot afterP1 = slotAt(9, 30, 11, 0);  // starts exactly when Period 1 ends
+		Person sara = invigilator("Sara Overlap");
+		create(g, period1, room("P1"), null, sara);
+
+		// Same day, a different slot whose time overlaps: refused.
+		Room hallB = room("Morning hall");
+		assertThatThrownBy(() -> create(g, morning, hallB, null, sara))
+			.isInstanceOf(ConflictException.class)
+			.hasMessageContaining("Sara Overlap");
+		// Also from another exam period: the rule looks at every period.
+		ScheduleGroup other = group("Other period");
+		Room hallC = room("Other hall");
+		assertThatThrownBy(() -> create(other, morning, hallC, null, sara)).isInstanceOf(ConflictException.class);
+
+		// Back-to-back is fine, and so is the same time on another day.
+		create(g, afterP1, room("Right after"), null, sara);
+		assignmentService.createAssignment(new RoomAssignmentRequest(
+			g.getId(), DAY.plusDays(1), room("Next day").getId(), morning.getId(), null, null, null, false, null, List.of(sara.getId()), null));
+
+		// Auto-assign never proposes her for the overlapping slot either.
+		Person free = invigilator("Free Person");
+		Room previewRoom = room("Preview");
+		GeneratePreviewResponse preview = assignmentService.generatePreview(new GeneratePreviewRequest(
+			g.getId(), DAY, morning.getId(), List.of(previewRoom.getId()), false, List.of()));
+		List<UUID> proposed = preview.assignments().getFirst().invigilatorIds();
+		assertThat(proposed).doesNotContain(sara.getId()).contains(free.getId());
+	}
+
+	private TimeSlot slotAt(int startHour, int startMinute, int endHour, int endMinute) {
+		return timeSlotRepository.save(TimeSlot.builder()
+			.label(startHour + ":" + startMinute + "-" + endHour + ":" + endMinute)
+			.startTime(LocalTime.of(startHour, startMinute))
+			.endTime(LocalTime.of(endHour, endMinute))
+			.build());
+	}
+
+	@Test
 	void theChiefParallelRoomLimitComesFromTheSettings() {
 		ScheduleGroup g = group("Parallel setting");
 		TimeSlot slot = slot(g, 9, 12);

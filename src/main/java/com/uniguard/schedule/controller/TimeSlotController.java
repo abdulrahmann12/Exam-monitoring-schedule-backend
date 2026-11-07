@@ -75,4 +75,10 @@ public class TimeSlotController {
     public TimeSlotResponse deactivateTimeSlot(@PathVariable UUID id) {
         return timeSlotService.deactivateTimeSlot(id);
     }
+
+    /** Undo a deactivation: the slot can be scheduled again. */
+    @PatchMapping("/{id}/activate")
+    public TimeSlotResponse activateTimeSlot(@PathVariable UUID id) {
+        return timeSlotService.activateTimeSlot(id);
+    }
 }
