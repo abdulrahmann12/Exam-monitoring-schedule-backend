@@ -1,5 +1,11 @@
 package com.uniguard.schedule.service;
 
+import org.slf4j.LoggerFactory;
+import java.text.MessageFormat;
+import java.util.stream.Collectors;
+import java.util.Set;
+import java.util.Locale;
+import java.util.Arrays;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -27,12 +33,15 @@ public class MailService {
 	private final String apiKey;
 	private final String senderEmail;
 	private final String senderName;
+	/** Test safety net: when not empty, email goes ONLY to these addresses (others are skipped, not sent). */
+	private final Set<String> allowedRecipients;
 
 	public MailService(
 		@Value("${app.brevo.api-key}") String apiKey,
 		@Value("${app.brevo.sender-email}") String senderEmail,
 		@Value("${app.brevo.sender-name:Uni-Guard Schedules}") String senderName,
-		@Value("${app.brevo.api-url:https://api.brevo.com/v3/smtp/email}") String apiUrl
+		@Value("${app.brevo.api-url:https://api.brevo.com/v3/smtp/email}") String apiUrl,
+		@Value("${app.mail.allowed-recipients:}") String allowedRecipients
 	) {
 		this.apiUrl = apiUrl;
 		SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
@@ -42,6 +51,13 @@ public class MailService {
 		this.apiKey = apiKey;
 		this.senderEmail = senderEmail;
 		this.senderName = senderName;
+		this.allowedRecipients = Arrays.stream(allowedRecipients.split(","))
+			.map(address -> address.trim().toLowerCase(Locale.ROOT))
+			.filter(address -> !address.isEmpty())
+			.collect(Collectors.toUnmodifiableSet());
+		if (!this.allowedRecipients.isEmpty()) {
+			LoggerFactory.getLogger(MailService.class).warn("[MAIL] Test mode: email is sent ONLY to {} other address(es) are skipped.", this.allowedRecipients);
+		}
 	}
 
 	/** False when BREVO_API_KEY or BREVO_SENDER_EMAIL is not set (e.g. on-premise installs without email). */
@@ -63,6 +79,10 @@ public class MailService {
 	public String sendHtmlWithPdf(String to, String subject, String htmlBody, String filename, byte[] pdf) {
 		if (!isConfigured()) {
 			throw new IllegalStateException(Messages.MAIL_NOT_CONFIGURED);
+		}
+		if (!allowedRecipients.isEmpty() && (to == null || !allowedRecipients.contains(to.trim().toLowerCase(Locale.ROOT)))) {
+			// Not retried: this address is simply outside the test list.
+			throw new MailDeliveryException(MessageFormat.format(Messages.MAIL_RECIPIENT_NOT_ALLOWED, to), false, null);
 		}
 		List<BrevoAttachment> attachments = null;
 		if (pdf != null && pdf.length > 0 && filename != null && !filename.isBlank()) {

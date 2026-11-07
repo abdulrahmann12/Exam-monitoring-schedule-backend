@@ -89,6 +89,7 @@ public final class Messages {
 	// ==================== Auth Messages ====================
 	public static final String AUTH_INVALID_CREDENTIALS = "Invalid email or password.";
 	public static final String AUTH_CURRENT_PASSWORD_WRONG = "Current password is incorrect.";
+	public static final String MAIL_RECIPIENT_NOT_ALLOWED = "Not sent: this server is in test mode and only emails its allowed test addresses ({0} is not one of them).";
 	public static final String MAIL_NOT_CONFIGURED = "Email sending is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL on the server.";
 	public static final String AUTH_ACCOUNT_LOCKED = "This account is locked after too many failed sign-in attempts. Try again after {0}, or ask your administrator to reset it.";
 	public static final String EMAIL_CHANGE_SAME = "This is already your sign-in email.";
