@@ -17,6 +17,7 @@ import com.uniguard.schedule.entity.AccountToken;
 import com.uniguard.schedule.entity.AdminUser;
 import com.uniguard.schedule.entity.enums.AccountTokenPurpose;
 import com.uniguard.schedule.entity.enums.AdminRole;
+import com.uniguard.schedule.exception.DuplicateResourceException;
 import com.uniguard.schedule.exception.ValidationException;
 import com.uniguard.schedule.repository.AccountTokenRepository;
 import com.uniguard.schedule.repository.AdminUserRepository;
@@ -42,6 +43,8 @@ import java.util.UUID;
 public class AccountTokenService {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(AccountTokenService.class);
+	/** How long a link to confirm a new email works. */
+	static final int EMAIL_CHANGE_HOURS = 24;
 
 	private final AccountTokenRepository tokens;
 	private final AdminUserRepository users;
@@ -78,6 +81,7 @@ public class AccountTokenService {
 	public LinkInfo check(String secret) {
 		Instant now = Instant.now();
 		AccountToken token = findUsable(secret, now, false);
+		requirePasswordLink(token);
 		AdminUser user = usableOwner(token);
 		return new LinkInfo(token.getPurpose(), user.getEmail(), token.getExpiresAt());
 	}
@@ -86,6 +90,7 @@ public class AccountTokenService {
 	public void setPassword(String secret, String newPassword) {
 		Instant now = Instant.now();
 		AccountToken token = findUsable(secret, now, true);
+		requirePasswordLink(token);
 		AdminUser user = usableOwner(token);
 		PasswordPolicy.validate(newPassword); // before anything changes: a weak password keeps the link usable
 
@@ -105,6 +110,62 @@ public class AccountTokenService {
 			"USER", user.getId().toString(),
 			invite ? "Accepted the invitation and chose a password" : "Set a new password with a reset link (all devices signed out)",
 			AuditEntry.Outcome.SUCCESS, user.getEmail()));
+	}
+
+	/** One-time link that confirms {@code newEmail} as the new sign-in email (sent to that address). */
+	@Transactional
+	public Issued issueEmailChange(AdminUser user, String newEmail) {
+		Instant now = Instant.now();
+		tokens.retireUnused(user.getId(), AccountTokenPurpose.EMAIL_CHANGE, now);
+		String secret = SecureTokens.newToken();
+		AccountToken token = new AccountToken();
+		token.setUserId(user.getId());
+		token.setPurpose(AccountTokenPurpose.EMAIL_CHANGE);
+		token.setTokenHash(SecureTokens.sha256(secret));
+		token.setNewEmail(newEmail);
+		token.setCreatedAt(now);
+		token.setExpiresAt(now.plus(EMAIL_CHANGE_HOURS, ChronoUnit.HOURS));
+		tokens.save(token);
+		return new Issued(properties.emailChangeLink(secret), token.getExpiresAt());
+	}
+
+	/**
+	 * The new address opened its link: it becomes the sign-in email. Every device is signed out
+	 * (the old email is in their tokens) and other open links stop working.
+	 *
+	 * @return the new email
+	 */
+	@Transactional
+	public String confirmEmailChange(String secret) {
+		Instant now = Instant.now();
+		AccountToken token = findUsable(secret, now, true);
+		if (token.getPurpose() != AccountTokenPurpose.EMAIL_CHANGE || token.getNewEmail() == null) {
+			throw invalid();
+		}
+		AdminUser user = usableOwner(token);
+		String newEmail = token.getNewEmail();
+		users.findByEmailIgnoreCase(newEmail)
+			.filter(other -> !other.getId().equals(user.getId()))
+			.ifPresent(other -> { throw new DuplicateResourceException(Messages.USER_EMAIL_EXISTS); });
+		String oldEmail = user.getEmail();
+		user.setEmail(newEmail);
+		user.setTokenVersion(user.getTokenVersion() + 1);
+		users.save(user);
+		token.setUsedAt(now);
+		tokens.save(token);
+		tokens.retireAllUnused(user.getId(), now);
+		sessionService.revokeAllForUser(user.getId());
+		LOGGER.info("[AUTH] Sign-in email changed from '{}' to '{}'; all sessions signed out.", oldEmail, newEmail);
+		auditService.recordAfterCommit(new AuditEntry("EMAIL_CHANGED", AuditCategory.SECURITY, "USER", user.getId().toString(),
+			"Changed sign-in email from " + oldEmail + " to " + newEmail + " (all devices signed out)",
+			AuditEntry.Outcome.SUCCESS, newEmail));
+		return newEmail;
+	}
+
+	/** The password changed: a pending email change is cancelled (it may have been started by someone else). */
+	@Transactional
+	public void cancelEmailChange(UUID userId) {
+		tokens.retireUnused(userId, AccountTokenPurpose.EMAIL_CHANGE, Instant.now());
 	}
 
 	@Transactional(readOnly = true)
@@ -142,6 +203,13 @@ public class AccountTokenService {
 			throw invalid();
 		}
 		return user;
+	}
+
+	/** Email-change links only confirm an address; they can never set a password. */
+	private static void requirePasswordLink(AccountToken token) {
+		if (token.getPurpose() == AccountTokenPurpose.EMAIL_CHANGE) {
+			throw invalid();
+		}
 	}
 
 	private static ValidationException invalid() {

@@ -89,8 +89,12 @@ public final class Messages {
 	// ==================== Auth Messages ====================
 	public static final String AUTH_INVALID_CREDENTIALS = "Invalid email or password.";
 	public static final String AUTH_CURRENT_PASSWORD_WRONG = "Current password is incorrect.";
+	public static final String MAIL_RECIPIENT_NOT_ALLOWED = "Not sent: this server is in test mode and only emails its allowed test addresses ({0} is not one of them).";
 	public static final String MAIL_NOT_CONFIGURED = "Email sending is not configured. Set BREVO_API_KEY and BREVO_SENDER_EMAIL on the server.";
 	public static final String AUTH_ACCOUNT_LOCKED = "This account is locked after too many failed sign-in attempts. Try again after {0}, or ask your administrator to reset it.";
+	public static final String EMAIL_CHANGE_SAME = "This is already your sign-in email.";
+	public static final String EMAIL_CHANGE_NO_MAIL = "Email is not set up on the server, so the new address cannot be confirmed. Ask the server administrator to set up email first.";
+	public static final String PROFILE_NAME_INVALID = "Enter a name of 1 to 120 characters.";
 	public static final String AUTH_PASSWORD_UNCHANGED = "The new password must be different from the current one.";
 	public static final String AUTH_PASSWORD_TOO_SHORT = "Password must be at least {0} characters.";
 	public static final String AUTH_PASSWORD_TOO_LONG = "Password is too long (maximum {0} bytes; non-Latin letters count as 2 or 3).";
@@ -175,7 +179,6 @@ public final class Messages {
 	public static final String SLOT_INACTIVE = "Time slot is inactive and cannot be used for new assignments.";
 	public static final String SLOT_DELETE_IN_USE = "Time slot ''{0}'' at {1} is referenced by existing assignments and cannot be deleted. Use deactivate instead.";
 	public static final String SLOT_INVALID_RANGE = "End time must be after start time.";
-	public static final String SLOT_CANNOT_CHANGE_GROUP = "A time slot cannot be moved to a different schedule group.";
 
 	// ==================== Assignment Messages ====================
 	public static final String ASSIGNMENT_NOT_FOUND = "Assignment with id {0} was not found.";
@@ -186,11 +189,11 @@ public final class Messages {
 	public static final String ASSIGNMENT_INVIGILATOR_DUPLICATE = "Duplicate invigilator ids are not allowed in the same room assignment.";
 	public static final String ASSIGNMENT_BULK_EMPTY = "At least one room assignment is required for bulk save.";
 	public static final String ASSIGNMENT_BULK_DUPLICATE_ROOM_SLOT = "Duplicate bulk assignment for room {0}, slot {1}, and date {2}.";
+	public static final String ASSIGNMENT_DELETE_ALL_NEEDS_PERIOD = "Choose the exam period whose assignments should be deleted.";
 	public static final String ASSIGNMENT_CHIEF_LIMIT = "Chief invigilator ''{0}'' is already supervising the maximum number of rooms at an overlapping time.";
 	public static final String ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED = "Invigilator ''{0}'' is already assigned at an overlapping time.";
 	public static final String ASSIGNMENT_CHIEF_UNAVAILABLE = "Chief invigilator ''{0}'' is unavailable on {1} ({2}).";
 	public static final String ASSIGNMENT_INVIGILATOR_UNAVAILABLE = "Invigilator ''{0}'' is unavailable on {1} ({2}).";
-	public static final String ASSIGNMENT_SLOT_GROUP_MISMATCH = "Time slot does not belong to schedule group ''{0}''.";
 	public static final String ASSIGNMENT_BULK_MIXED_GROUPS = "Bulk save cannot mix assignments from different schedule groups.";
 	public static final String ASSIGNMENT_GROUP_REQUIRED = "Assignment is missing a schedule group.";
 	public static final String ASSIGNMENT_ROOM_OVERLAP = "Room ''{0}'' is already booked on {1} at an overlapping time ({2}).";

@@ -1,7 +1,11 @@
 package com.uniguard.schedule.entity;
 
+import com.uniguard.schedule.service.SchedulingSettings;
+
 import org.hibernate.annotations.TenantId;
+import com.uniguard.schedule.dto.settings.DocumentSignature;
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -14,6 +18,8 @@ import lombok.NoArgsConstructor;
 
 import com.uniguard.schedule.entity.enums.ThemeMode;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Data
@@ -82,4 +88,15 @@ public class Settings {
 	@Builder.Default
 	@Column(name = "students_per_invigilator", nullable = false)
 	private int studentsPerInvigilator = 0;
+
+	/** How many rooms one chief invigilator may cover at the same time (invigilators: always 1). */
+	@Builder.Default
+	@Column(name = "chief_max_parallel_rooms", nullable = false)
+	private int chiefMaxParallelRooms = SchedulingSettings.DEFAULT_CHIEF_PARALLEL_ROOMS;
+
+	/** Signature blocks at the foot of exported schedules (title + name), at most four. */
+	@Builder.Default
+	@Convert(converter = DocumentSignaturesConverter.class)
+	@Column(name = "document_signatures", length = 2000)
+	private List<DocumentSignature> documentSignatures = new ArrayList<>();
 }

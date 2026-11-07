@@ -45,12 +45,12 @@ public class TimeSlotController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(defaultValue = "sortOrder") String sortBy,
             @RequestParam(defaultValue = "ASC") Sort.Direction direction,
-            @RequestParam(required = false) UUID scheduleGroupId,
             @RequestParam(required = false) String label,
             @RequestParam(required = false) Boolean activeOnly
     ) {
         Pageable pageable = pageRequestFactory.create(page, size, sortBy, direction, ALLOWED_SORTS);
-        return timeSlotService.getTimeSlots(scheduleGroupId, label, activeOnly, pageable);
+        // Time slots are shared by every exam period; an old client's scheduleGroupId is ignored.
+        return timeSlotService.getTimeSlots(label, activeOnly, pageable);
     }
 
     @PostMapping
@@ -74,5 +74,11 @@ public class TimeSlotController {
     @PatchMapping("/{id}/deactivate")
     public TimeSlotResponse deactivateTimeSlot(@PathVariable UUID id) {
         return timeSlotService.deactivateTimeSlot(id);
+    }
+
+    /** Undo a deactivation: the slot can be scheduled again. */
+    @PatchMapping("/{id}/activate")
+    public TimeSlotResponse activateTimeSlot(@PathVariable UUID id) {
+        return timeSlotService.activateTimeSlot(id);
     }
 }

@@ -109,6 +109,11 @@ public class SecurityConfig {
 				// Own session: every signed-in user.
 				.requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
 				.requestMatchers(HttpMethod.POST, "/api/auth/logout-all", "/api/auth/change-password").authenticated()
+				// Own name: every signed-in user (the demo is refused by DemoReadOnlyFilter).
+				.requestMatchers(HttpMethod.PUT, "/api/auth/profile").authenticated()
+				// New sign-in email: asked while signed in, confirmed from the link (the secret is the proof).
+				.requestMatchers(HttpMethod.POST, "/api/auth/email-change").authenticated()
+				.requestMatchers(HttpMethod.POST, "/api/auth/email-change/confirm").permitAll()
 				// Owner panel: the platform owner only.
 				.requestMatchers("/api/owner", "/api/owner/**").hasRole(OWNER)
 				// User management: administrators only (also for reading — it lists emails).

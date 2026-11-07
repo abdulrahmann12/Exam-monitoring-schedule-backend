@@ -226,7 +226,6 @@ class StaffConcurrencyRulesTest {
 	private static TimeSlot slot(ScheduleGroup group, int startHour, int endHour) {
 		return TimeSlot.builder()
 			.id(UUID.randomUUID())
-			.scheduleGroup(group)
 			.startTime(LocalTime.of(startHour, 0))
 			.endTime(LocalTime.of(endHour, 0))
 			.build();

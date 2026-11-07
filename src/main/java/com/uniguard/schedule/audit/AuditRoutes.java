@@ -7,6 +7,7 @@ import com.uniguard.schedule.dto.person.PersonResponse;
 import com.uniguard.schedule.dto.room.RoomResponse;
 import com.uniguard.schedule.dto.schedulegroup.ScheduleGroupResponse;
 import com.uniguard.schedule.dto.schedulegroup.ScheduleNotifyResponse;
+import com.uniguard.schedule.dto.assignment.DeleteAllAssignmentsResponse;
 import com.uniguard.schedule.dto.timeslot.TimeSlotResponse;
 import com.uniguard.schedule.dto.unavailability.UnavailabilityResponse;
 
@@ -54,6 +55,7 @@ public final class AuditRoutes {
 		route("PUT /api/slots/{id}", "TIME_SLOT_UPDATED", AuditCategory.TIME_SLOTS, "TIME_SLOT", "id", named("Edited time slot")),
 		route("DELETE /api/slots/{id}", "TIME_SLOT_DELETED", AuditCategory.TIME_SLOTS, "TIME_SLOT", "id", named("Deleted time slot")),
 		route("PATCH /api/slots/{id}/deactivate", "TIME_SLOT_DEACTIVATED", AuditCategory.TIME_SLOTS, "TIME_SLOT", "id", named("Deactivated time slot")),
+		route("PATCH /api/slots/{id}/activate", "TIME_SLOT_ACTIVATED", AuditCategory.TIME_SLOTS, "TIME_SLOT", "id", named("Activated time slot")),
 
 		route("POST /api/schedule-groups", "EXAM_PERIOD_CREATED", AuditCategory.SCHEDULES, "SCHEDULE_GROUP", null, named("Created exam period")),
 		route("PUT /api/schedule-groups/{id}", "EXAM_PERIOD_UPDATED", AuditCategory.SCHEDULES, "SCHEDULE_GROUP", "id", named("Edited exam period")),
@@ -69,6 +71,10 @@ public final class AuditRoutes {
 
 		route("POST /api/assignments", "EXAM_ROOM_CREATED", AuditCategory.SCHEDULES, "ASSIGNMENT", null, (body, name) ->
 			"Added " + (body instanceof RoomAssignmentResponse a ? describe(a) : "exam room")),
+		route("DELETE /api/assignments", "EXAM_PERIOD_CLEARED", AuditCategory.SCHEDULES, null, null, (body, name) ->
+			body instanceof DeleteAllAssignmentsResponse r
+				? "Deleted all " + r.deleted() + " exam room(s) of exam period " + quote(r.examPeriod())
+				: "Deleted all exam rooms of an exam period"),
 		route("PUT /api/assignments/{id}", "EXAM_ROOM_UPDATED", AuditCategory.SCHEDULES, "ASSIGNMENT", "id", (body, name) ->
 			"Edited " + (body instanceof RoomAssignmentResponse a ? describe(a) : nonNull(name, "exam room"))),
 		route("DELETE /api/assignments/{id}", "EXAM_ROOM_DELETED", AuditCategory.SCHEDULES, "ASSIGNMENT", "id", (body, name) ->

@@ -25,6 +25,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import com.uniguard.schedule.config.Messages;
 import com.uniguard.schedule.dto.assignment.BulkRoomAssignmentRequest;
+import com.uniguard.schedule.dto.assignment.DeleteAllAssignmentsResponse;
 import com.uniguard.schedule.dto.assignment.GeneratePreviewRequest;
 import com.uniguard.schedule.dto.assignment.GeneratePreviewResponse;
 import com.uniguard.schedule.dto.assignment.RoomAssignmentRequest;
@@ -185,6 +186,25 @@ public class AssignmentService {
         staffConcurrencyRules.applyWorkloadDelta(previousOccurrences, Map.of());
     }
 
+    /**
+     * Removes every assignment of one exam period in a single transaction: either all of them go,
+     * or (on any error) none do. People, rooms, time slots and other periods are untouched.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public DeleteAllAssignmentsResponse deleteAllInGroup(UUID scheduleGroupId) {
+        demoModeService.rejectIfDemoUser("delete-all-assignments");
+        if (scheduleGroupId == null) {
+            throw new ValidationException(Messages.ASSIGNMENT_DELETE_ALL_NEEDS_PERIOD);
+        }
+        scheduleWriteLock.acquire();
+        ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
+        List<RoomAssignment> assignments = roomAssignmentRepository.findAllDetailedByScheduleGroupId(group.getId());
+        Map<UUID, Integer> previousOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(assignments);
+        roomAssignmentRepository.deleteAll(assignments);
+        staffConcurrencyRules.applyWorkloadDelta(previousOccurrences, Map.of());
+        return new DeleteAllAssignmentsResponse(assignments.size(), group.getName());
+    }
+
     // ─── Private helpers ────────────────────────────────────────────────────────
 
     private List<RoomAssignmentResponse> getOrderedAssignmentResponses(Collection<UUID> assignmentIds) {
@@ -340,7 +360,6 @@ public class AssignmentService {
         assignment.setExamDate(request.examDate());
         assignment.setRoom(room);
         assignment.setTimeSlot(timeSlot);
-        assertSlotBelongsToGroup(timeSlot, group);
         assignment.setScheduleGroup(group);
         assignment.setChiefInvigilator(chiefInvigilator);
         assignment.setLocked(Boolean.TRUE.equals(request.isLocked()));
@@ -356,13 +375,10 @@ public class AssignmentService {
             group = scheduleGroupSupport.requireGroup(requestedGroupId);
         } else if (existing != null) {
             group = existing;
-        } else if (timeSlot.getScheduleGroup() != null) {
-            group = timeSlot.getScheduleGroup();
         } else {
             group = scheduleGroupSupport.getOrCreateDefaultGroup();
         }
-        assertSlotBelongsToGroup(timeSlot, group);
-        return group;
+        return group; // time slots are shared by every exam period
     }
 
     private ScheduleGroup resolveBulkGroup(List<BulkRoomAssignmentRequest> requests, Map<UUID, TimeSlot> timeSlotsById) {
@@ -370,11 +386,6 @@ public class AssignmentService {
         for (BulkRoomAssignmentRequest request : requests) {
             if (request.scheduleGroupId() != null) {
                 groupIds.add(request.scheduleGroupId());
-                continue;
-            }
-            TimeSlot slot = timeSlotsById.get(request.slotId());
-            if (slot != null && slot.getScheduleGroup() != null) {
-                groupIds.add(slot.getScheduleGroup().getId());
             }
         }
         if (groupIds.size() > 1) {
@@ -384,17 +395,6 @@ public class AssignmentService {
             return scheduleGroupSupport.requireGroup(groupIds.iterator().next());
         }
         return scheduleGroupSupport.getOrCreateDefaultGroup();
-    }
-
-    private void assertSlotBelongsToGroup(TimeSlot timeSlot, ScheduleGroup group) {
-        if (timeSlot.getScheduleGroup() == null) {
-            timeSlot.setScheduleGroup(group);
-            return;
-        }
-        if (!timeSlot.getScheduleGroup().getId().equals(group.getId())) {
-            throw new ConflictException(MessageFormat.format(
-                    Messages.ASSIGNMENT_SLOT_GROUP_MISMATCH, group.getName()));
-        }
     }
 
     private Person resolveChiefInvigilator(UUID chiefInvigilatorId) {

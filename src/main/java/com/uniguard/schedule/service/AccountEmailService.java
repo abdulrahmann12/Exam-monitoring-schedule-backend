@@ -100,12 +100,43 @@ public class AccountEmailService {
 		return send(user, subject, html, "password reset", com.uniguard.schedule.entity.EmailMessage.KIND_PASSWORD_RESET, link.link());
 	}
 
+	/** Sent to the NEW address: proves the person can read it before it becomes the sign-in email. */
+	public boolean sendEmailChangeConfirmation(AdminUser user, String newEmail, AccountTokenService.Issued link) {
+		String appName = appName(user);
+		String subject = "Confirm your new " + appName + " email";
+		String html = layout(appName,
+			"<p>Hello" + greetingName(user) + ",</p>"
+				+ "<p>You asked to use <strong>" + escape(newEmail) + "</strong> to sign in to " + escape(appName) + ". "
+				+ "Confirm it to finish the change. You will then sign in again with this address on every device.</p>",
+			"Confirm my new email", link.link(),
+			"This link works once and expires on " + WHEN.format(link.expiresAt()) + ". "
+				+ "If you did not ask for this, ignore this email — nothing changes.");
+		return send(user, newEmail, subject, html, "email change", com.uniguard.schedule.entity.EmailMessage.KIND_EMAIL_CHANGE, link.link());
+	}
+
+	/** Sent to the CURRENT address, so the real owner notices if someone else started the change. */
+	public void sendEmailChangeNotice(AdminUser user, String newEmail) {
+		String appName = appName(user);
+		String subject = "Your " + appName + " sign-in email is being changed";
+		String html = "<div style=\"font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#1f2937\">"
+			+ "<h2 style=\"color:#1d4ed8\">" + escape(appName) + "</h2>"
+			+ "<p>Hello" + greetingName(user) + ",</p>"
+			+ "<p>Someone signed in to your account asked to change its sign-in email to <strong>" + escape(newEmail) + "</strong>. "
+			+ "The change happens only when that address confirms it.</p>"
+			+ "<p><strong>Not you?</strong> Change your password now — that also cancels the request — and turn on two-step sign-in.</p>"
+			+ "</div>";
+		send(user, user.getEmail(), subject, html, "security notice", com.uniguard.schedule.entity.EmailMessage.KIND_SECURITY_NOTICE, null);
+	}
+
 	private boolean send(AdminUser user, String subject, String html, String kind, String outboxKind, String link) {
-		String to = user.getEmail();
+		return send(user, user.getEmail(), subject, html, kind, outboxKind, link);
+	}
+
+	private boolean send(AdminUser user, String to, String subject, String html, String kind, String outboxKind, String link) {
 		java.util.UUID universityId = user.getUniversityId();
 		String name = user.getDisplayName();
 		if (!mailService.isConfigured()) {
-			if (properties.logLinks()) {
+			if (properties.logLinks() && link != null) {
 				LOGGER.warn("[MAIL-DEV] Email not configured. {} link for {}: {}", kind, to, link);
 			} else {
 				LOGGER.warn("[MAIL] Email not configured — could not send the {} email to {}.", kind, to);

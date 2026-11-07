@@ -10,6 +10,7 @@ import org.springframework.validation.annotation.Validated;
 
 import com.uniguard.schedule.config.ApplicationDefaults;
 import com.uniguard.schedule.config.CacheConfig;
+import com.uniguard.schedule.dto.settings.DocumentSignature;
 import com.uniguard.schedule.dto.settings.SettingsRequest;
 import com.uniguard.schedule.dto.settings.SettingsResponse;
 import com.uniguard.schedule.entity.Settings;
@@ -48,6 +49,11 @@ public class SettingsService {
 		demoModeService.rejectIfDemoUser("update-settings");
 		Settings settings = getOrCreateSettingsEntity();
 		settingsMapper.updateEntity(request, settings);
+		if (request.documentSignatures() != null) { // omitted = keep (e.g. the theme switch sends only part of the form)
+			settings.setDocumentSignatures(request.documentSignatures().stream()
+				.map(signature -> new DocumentSignature(signature.title().strip(), signature.name() == null ? "" : signature.name().strip()))
+				.toList());
+		}
 		settings.setId(TenantContext.require());
 		scheduleGroupSupport.syncDefaultGroupName(request.examPeriod());
 		return withActiveGroupExamPeriod(settingsMapper.toResponse(settingsRepository.save(settings)));
@@ -86,7 +92,9 @@ public class SettingsService {
 			response.maxDutiesPerDay(),
 			response.maxDutiesPerPeriod(),
 			response.minRestMinutes(),
-			response.studentsPerInvigilator()
+			response.studentsPerInvigilator(),
+			response.chiefMaxParallelRooms(),
+			response.documentSignatures()
 		);
 	}
 }

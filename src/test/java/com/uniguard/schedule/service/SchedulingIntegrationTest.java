@@ -169,6 +169,103 @@ class SchedulingIntegrationTest {
 		assertThat(roomAssignmentRepository.count()).isEqualTo(2);
 	}
 
+	@Test
+	void differentSlotsThatOverlapInTimeCannotShareAnInvigilator() {
+		ScheduleGroup g = group("Overlap by time");
+		TimeSlot period1 = slotAt(8, 0, 9, 30);   // 08:00-09:30
+		TimeSlot morning = slotAt(9, 0, 12, 0);   // 09:00-12:00, overlaps 09:00-09:30
+		TimeSlot afterP1 = slotAt(9, 30, 11, 0);  // starts exactly when Period 1 ends
+		Person sara = invigilator("Sara Overlap");
+		create(g, period1, room("P1"), null, sara);
+
+		// Same day, a different slot whose time overlaps: refused.
+		Room hallB = room("Morning hall");
+		assertThatThrownBy(() -> create(g, morning, hallB, null, sara))
+			.isInstanceOf(ConflictException.class)
+			.hasMessageContaining("Sara Overlap");
+		// Also from another exam period: the rule looks at every period.
+		ScheduleGroup other = group("Other period");
+		Room hallC = room("Other hall");
+		assertThatThrownBy(() -> create(other, morning, hallC, null, sara)).isInstanceOf(ConflictException.class);
+
+		// Back-to-back is fine, and so is the same time on another day.
+		create(g, afterP1, room("Right after"), null, sara);
+		assignmentService.createAssignment(new RoomAssignmentRequest(
+			g.getId(), DAY.plusDays(1), room("Next day").getId(), morning.getId(), null, null, null, false, null, List.of(sara.getId()), null));
+
+		// Auto-assign never proposes her for the overlapping slot either.
+		Person free = invigilator("Free Person");
+		Room previewRoom = room("Preview");
+		GeneratePreviewResponse preview = assignmentService.generatePreview(new GeneratePreviewRequest(
+			g.getId(), DAY, morning.getId(), List.of(previewRoom.getId()), false, List.of()));
+		List<UUID> proposed = preview.assignments().getFirst().invigilatorIds();
+		assertThat(proposed).doesNotContain(sara.getId()).contains(free.getId());
+	}
+
+	@Test
+	void deletingAllOfOnePeriodLeavesOtherPeriodsAndFixesWorkload() {
+		ScheduleGroup fall = group("Fall clear");
+		ScheduleGroup spring = group("Spring keep");
+		TimeSlot slot = slot(fall, 9, 12);
+		Person chief = chief("Clear Chief");
+		Person sara = invigilator("Clear Sara");
+		create(fall, slot, room("F1"), chief, sara);
+		create(fall, slotAt(13, 0, 15, 0), room("F2"), chief);
+		assignmentService.createAssignment(new RoomAssignmentRequest(
+			spring.getId(), DAY.plusDays(30), room("S1").getId(), slot.getId(), null, null, chief.getId(), false, null, List.of(), null));
+		assertThat(personRepository.findById(chief.getId()).orElseThrow().getTotalAssignments()).isEqualTo(3);
+
+		var result = assignmentService.deleteAllInGroup(fall.getId());
+
+		assertThat(result.deleted()).isEqualTo(2);
+		assertThat(result.examPeriod()).isEqualTo(fall.getName());
+		assertThat(roomAssignmentRepository.findAllDetailedByScheduleGroupId(fall.getId())).isEmpty();
+		assertThat(roomAssignmentRepository.findAllDetailedByScheduleGroupId(spring.getId())).hasSize(1);
+		assertThat(personRepository.findById(chief.getId()).orElseThrow().getTotalAssignments()).isEqualTo(1);
+		assertThat(personRepository.findById(sara.getId()).orElseThrow().getTotalAssignments()).isZero();
+		assertThatThrownBy(() -> assignmentService.deleteAllInGroup(null)).isInstanceOf(com.uniguard.schedule.exception.ValidationException.class);
+	}
+
+	private TimeSlot slotAt(int startHour, int startMinute, int endHour, int endMinute) {
+		return timeSlotRepository.save(TimeSlot.builder()
+			.label(startHour + ":" + startMinute + "-" + endHour + ":" + endMinute)
+			.startTime(LocalTime.of(startHour, startMinute))
+			.endTime(LocalTime.of(endHour, endMinute))
+			.build());
+	}
+
+	@Test
+	void theChiefParallelRoomLimitComesFromTheSettings() {
+		ScheduleGroup g = group("Parallel setting");
+		TimeSlot slot = slot(g, 9, 12);
+		Person chief = chief("Setting Chief");
+		try {
+			setChiefMaxParallelRooms(3);
+			create(g, slot, room("S1"), chief);
+			create(g, slot, room("S2"), chief);
+			create(g, slot, room("S3"), chief);
+			Room fourth = room("S4");
+			assertThatThrownBy(() -> create(g, slot, fourth, chief))
+				.isInstanceOf(com.uniguard.schedule.exception.ConflictException.class)
+				.hasMessageContaining("maximum number of rooms");
+
+			setChiefMaxParallelRooms(1);
+			TimeSlot later = slot(g, 13, 15);
+			create(g, later, room("S5"), chief);
+			Room sixth = room("S6");
+			assertThatThrownBy(() -> create(g, later, sixth, chief)).hasMessageContaining("maximum number of rooms");
+		} finally {
+			setChiefMaxParallelRooms(SchedulingSettings.DEFAULT_CHIEF_PARALLEL_ROOMS);
+		}
+	}
+
+	private void setChiefMaxParallelRooms(int value) {
+		settingsRepository.findById(ApplicationDefaults.DEFAULT_SETTINGS_ID).ifPresent(settings -> {
+			settings.setChiefMaxParallelRooms(value);
+			settingsRepository.save(settings);
+		});
+	}
+
 	@AfterEach
 	void cleanUp() {
 		roomAssignmentRepository.deleteAll();
@@ -258,7 +355,7 @@ class SchedulingIntegrationTest {
 		create(g, morning, hall, chief("C1"));
 		create(g, slot(g, 10, 12), hall, chief("C2"));
 
-		TimeSlotRequest stretch = new TimeSlotRequest(g.getId(), morning.getLabel(), LocalTime.of(8, 0), LocalTime.of(11, 0), morning.getSortOrder());
+		TimeSlotRequest stretch = new TimeSlotRequest(morning.getLabel(), LocalTime.of(8, 0), LocalTime.of(11, 0), morning.getSortOrder());
 		assertThatThrownBy(() -> timeSlotService.updateTimeSlot(morning.getId(), stretch))
 			.isInstanceOf(ConflictException.class)
 			.hasMessageContaining("Hall");
@@ -430,8 +527,7 @@ class SchedulingIntegrationTest {
 	}
 
 	private TimeSlot slot(ScheduleGroup group, int startHour, int endHour) {
-		return timeSlotRepository.save(TimeSlot.builder()
-			.scheduleGroup(group)
+		return timeSlotRepository.save(TimeSlot.builder() // shared by every exam period
 			.label(startHour + "-" + endHour)
 			.startTime(LocalTime.of(startHour, 0))
 			.endTime(LocalTime.of(endHour, 0))

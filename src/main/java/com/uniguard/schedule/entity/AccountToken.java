@@ -55,6 +55,10 @@ public class AccountToken {
 	@Column(name = "used_at")
 	private Instant usedAt;
 
+	/** Only for {@link AccountTokenPurpose#EMAIL_CHANGE}: the address that becomes the sign-in email. */
+	@Column(name = "new_email", length = 160)
+	private String newEmail;
+
 	public boolean isUsable(Instant now) {
 		return usedAt == null && expiresAt.isAfter(now);
 	}

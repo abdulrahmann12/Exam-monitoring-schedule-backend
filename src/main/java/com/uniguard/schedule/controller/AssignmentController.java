@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.uniguard.schedule.config.PageRequestFactory;
+import com.uniguard.schedule.dto.assignment.DeleteAllAssignmentsResponse;
 import com.uniguard.schedule.dto.assignment.BulkRoomAssignmentRequest;
 import com.uniguard.schedule.dto.assignment.GeneratePreviewRequest;
 import com.uniguard.schedule.dto.assignment.GeneratePreviewResponse;
@@ -96,6 +97,12 @@ public class AssignmentController {
 	@PutMapping("/{id}")
 	public RoomAssignmentResponse updateAssignment(@PathVariable UUID id, @Valid @RequestBody RoomAssignmentRequest request) {
 		return assignmentService.updateAssignment(id, request);
+	}
+
+	/** Deletes every assignment of one exam period, all at once or not at all. */
+	@DeleteMapping
+	public DeleteAllAssignmentsResponse deleteAllAssignments(@RequestParam UUID scheduleGroupId) {
+		return assignmentService.deleteAllInGroup(scheduleGroupId);
 	}
 
 	@DeleteMapping("/{id}")

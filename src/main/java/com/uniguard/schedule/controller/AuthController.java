@@ -11,6 +11,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -22,6 +23,10 @@ import com.uniguard.schedule.dto.auth.ForgotPasswordRequest;
 import com.uniguard.schedule.dto.auth.LinkInfoResponse;
 import com.uniguard.schedule.dto.auth.LinkTokenRequest;
 import com.uniguard.schedule.dto.auth.SetPasswordFromLinkRequest;
+import com.uniguard.schedule.dto.auth.UpdateProfileRequest;
+import com.uniguard.schedule.dto.auth.EmailChangeConfirmRequest;
+import com.uniguard.schedule.dto.auth.EmailChangeRequest;
+import com.uniguard.schedule.dto.auth.EmailChangeStartedResponse;
 import com.uniguard.schedule.dto.common.MessageResponse;
 import com.uniguard.schedule.dto.auth.LoginRequest;
 import com.uniguard.schedule.dto.auth.MeResponse;
@@ -131,6 +136,31 @@ public class AuthController {
 				: universityRepository.findById(user.getUniversityId()).map(University::getName).orElse(null),
 			user.isTwoFactorEnabled()
 		);
+	}
+
+	/** Starts a change of the sign-in email: a link goes to the new address, nothing changes yet. */
+	@PostMapping("/email-change")
+	@ResponseStatus(HttpStatus.ACCEPTED)
+	public EmailChangeStartedResponse requestEmailChange(@AuthenticationPrincipal AppUserPrincipal user, @Valid @RequestBody EmailChangeRequest request) {
+		return authService.requestEmailChange(user.getUsername(), request);
+	}
+
+	/**
+	 * The link from the new address was opened: the email changes and every device is signed out
+	 * (also this browser, whatever account it was signed in with). Public: the secret is the proof.
+	 */
+	@PostMapping("/email-change/confirm")
+	public MessageResponse confirmEmailChange(@Valid @RequestBody EmailChangeConfirmRequest request, HttpServletResponse response) {
+		String newEmail = accountTokenService.confirmEmailChange(request.token());
+		authCookies.clear(response);
+		return new MessageResponse("Your sign-in email is now " + newEmail + ". Sign in again with it.");
+	}
+
+	/** Changes the signed-in person's own name. */
+	@PutMapping("/profile")
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void updateProfile(@AuthenticationPrincipal AppUserPrincipal user, @Valid @RequestBody UpdateProfileRequest request) {
+		authService.updateProfile(user.getUsername(), request);
 	}
 
 	/** Logs out this device. Works even when the access token has expired; always clears the cookies. */

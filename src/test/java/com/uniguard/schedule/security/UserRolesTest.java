@@ -35,6 +35,7 @@ import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -178,6 +179,87 @@ class UserRolesTest {
 				{"email":"not-an-email","role":"VIEWER","temporaryPassword":"temporary-pass-1"}
 				"""))
 			.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void everyoneCanChangeTheirOwnNameOnly() throws Exception {
+		String viewer = token(VIEWER);
+		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"  Nour   Ahmed \"}"))
+			.andExpect(status().isNoContent());
+		mockMvc.perform(authed(get("/api/auth/me"), viewer)).andExpect(jsonPath("$.displayName").value("Nour Ahmed"));
+		assertThat(users.findByEmailIgnoreCase(ADMIN).orElseThrow().getDisplayName()).isNotEqualTo("Nour Ahmed");
+
+		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"   \"}")).andExpect(status().isBadRequest());
+		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"%s\"}".formatted("a".repeat(121))))
+			.andExpect(status().isBadRequest());
+		mockMvc.perform(json(put("/api/auth/profile"), viewer, "{\"displayName\":\"bad\\u0007name\"}")).andExpect(status().isBadRequest());
+		mockMvc.perform(authed(get("/api/auth/me"), viewer)).andExpect(jsonPath("$.displayName").value("Nour Ahmed"));
+	}
+
+	@Test
+	void aDeactivatedTimeSlotCanBeActivatedAgainButNotByAViewer() throws Exception {
+		String scheduler = token(SCHEDULER);
+		String body = mockMvc.perform(json(post("/api/slots"), scheduler, """
+				{"label":"Roles slot","startTime":"07:00","endTime":"08:00","sortOrder":99}
+				"""))
+			.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+		String id = objectMapper.readTree(body).get("id").asText();
+		try {
+			mockMvc.perform(authed(patch("/api/slots/" + id + "/deactivate"), scheduler))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.active").value(false));
+			mockMvc.perform(authed(patch("/api/slots/" + id + "/activate"), token(VIEWER))).andExpect(status().isForbidden());
+			mockMvc.perform(authed(patch("/api/slots/" + id + "/activate"), scheduler))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.active").value(true));
+		} finally {
+			mockMvc.perform(authed(delete("/api/slots/" + id), scheduler)).andExpect(status().isNoContent());
+		}
+	}
+
+	@Test
+	void documentSignaturesAreSavedKeptWhenOmittedAndValidated() throws Exception {
+		String admin = token(ADMIN);
+		String base = """
+			"systemName":"Uni-Guard Schedules","theme":"LIGHT","universityName":"Roles University","examPeriod":"Fall"
+			""".strip();
+		try {
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + """
+					,"documentSignatures":[{"title":" Head of Schedules Committee ","name":" Dr. Laila Fawzy "},{"title":"University Vice President","name":"Prof. Omar Nabil"}]}
+					"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.documentSignatures[0].title").value("Head of Schedules Committee"))
+				.andExpect(jsonPath("$.documentSignatures[0].name").value("Dr. Laila Fawzy"))
+				.andExpect(jsonPath("$.documentSignatures.length()").value(2));
+
+			// Saving other settings without the field keeps the signatures (the theme switch does this).
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + "}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.documentSignatures.length()").value(2));
+
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + ",\"documentSignatures\":[{\"title\":\"\",\"name\":\"x\"}]}"))
+				.andExpect(status().isBadRequest());
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + ",\"documentSignatures\":["
+					+ "{\"title\":\"a\"},{\"title\":\"b\"},{\"title\":\"c\"},{\"title\":\"d\"},{\"title\":\"e\"}]}"))
+				.andExpect(status().isBadRequest());
+			mockMvc.perform(json(put("/api/settings"), token(SCHEDULER), "{" + base + ",\"documentSignatures\":[]}"))
+				.andExpect(status().isForbidden());
+		} finally {
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + ",\"documentSignatures\":[]}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.documentSignatures.length()").value(0));
+		}
+	}
+
+	@Test
+	void viewersCannotClearAnExamPeriod() throws Exception {
+		mockMvc.perform(authed(delete("/api/assignments").param("scheduleGroupId", UUID.randomUUID().toString()), token(VIEWER)))
+			.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void changingTheNameNeedsASignIn() throws Exception {
+		mockMvc.perform(put("/api/auth/profile").header(CSRF_HEADER, "XMLHttpRequest")
+				.contentType(MediaType.APPLICATION_JSON).content("{\"displayName\":\"X\"}"))
+			.andExpect(status().isUnauthorized());
 	}
 
 	@Test
