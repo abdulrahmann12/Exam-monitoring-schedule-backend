@@ -17,6 +17,7 @@ public record SettingsResponse(
 	int maxDutiesPerPeriod,
 	int minRestMinutes,
 	int studentsPerInvigilator,
-	int chiefMaxParallelRooms
+	int chiefMaxParallelRooms,
+	java.util.List<DocumentSignature> documentSignatures
 ) {
 }

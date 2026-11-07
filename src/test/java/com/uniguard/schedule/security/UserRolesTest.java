@@ -216,6 +216,40 @@ class UserRolesTest {
 	}
 
 	@Test
+	void documentSignaturesAreSavedKeptWhenOmittedAndValidated() throws Exception {
+		String admin = token(ADMIN);
+		String base = """
+			"systemName":"Uni-Guard Schedules","theme":"LIGHT","universityName":"Roles University","examPeriod":"Fall"
+			""".strip();
+		try {
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + """
+					,"documentSignatures":[{"title":" Head of Schedules Committee ","name":" Dr. Laila Fawzy "},{"title":"University Vice President","name":"Prof. Omar Nabil"}]}
+					"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.documentSignatures[0].title").value("Head of Schedules Committee"))
+				.andExpect(jsonPath("$.documentSignatures[0].name").value("Dr. Laila Fawzy"))
+				.andExpect(jsonPath("$.documentSignatures.length()").value(2));
+
+			// Saving other settings without the field keeps the signatures (the theme switch does this).
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + "}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.documentSignatures.length()").value(2));
+
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + ",\"documentSignatures\":[{\"title\":\"\",\"name\":\"x\"}]}"))
+				.andExpect(status().isBadRequest());
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + ",\"documentSignatures\":["
+					+ "{\"title\":\"a\"},{\"title\":\"b\"},{\"title\":\"c\"},{\"title\":\"d\"},{\"title\":\"e\"}]}"))
+				.andExpect(status().isBadRequest());
+			mockMvc.perform(json(put("/api/settings"), token(SCHEDULER), "{" + base + ",\"documentSignatures\":[]}"))
+				.andExpect(status().isForbidden());
+		} finally {
+			mockMvc.perform(json(put("/api/settings"), admin, "{" + base + ",\"documentSignatures\":[]}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.documentSignatures.length()").value(0));
+		}
+	}
+
+	@Test
 	void viewersCannotClearAnExamPeriod() throws Exception {
 		mockMvc.perform(authed(delete("/api/assignments").param("scheduleGroupId", UUID.randomUUID().toString()), token(VIEWER)))
 			.andExpect(status().isForbidden());

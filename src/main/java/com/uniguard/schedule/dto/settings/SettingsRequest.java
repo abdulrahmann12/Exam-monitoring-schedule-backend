@@ -1,5 +1,9 @@
 package com.uniguard.schedule.dto.settings;
 
+import java.util.List;
+
+import jakarta.validation.Valid;
+
 import com.uniguard.schedule.service.SchedulingSettings;
 
 import jakarta.validation.constraints.Max;
@@ -58,6 +62,10 @@ public record SettingsRequest(
 	/** Rooms one chief invigilator may cover at the same time. Omit to keep the current value. */
 	@Min(value = 1, message = "A chief invigilator must be able to cover at least 1 room")
 	@Max(value = SchedulingSettings.MAX_CHIEF_PARALLEL_ROOMS, message = "A chief invigilator can cover at most 10 rooms at the same time")
-	Integer chiefMaxParallelRooms
+	Integer chiefMaxParallelRooms,
+
+	/** Signature blocks for exported schedules; omit to keep them, an empty list removes them. */
+	@Size(max = 4, message = "At most 4 signatures fit on an exported page")
+	List<@Valid DocumentSignature> documentSignatures
 ) {
 }
