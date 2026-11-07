@@ -202,6 +202,30 @@ class SchedulingIntegrationTest {
 		assertThat(proposed).doesNotContain(sara.getId()).contains(free.getId());
 	}
 
+	@Test
+	void deletingAllOfOnePeriodLeavesOtherPeriodsAndFixesWorkload() {
+		ScheduleGroup fall = group("Fall clear");
+		ScheduleGroup spring = group("Spring keep");
+		TimeSlot slot = slot(fall, 9, 12);
+		Person chief = chief("Clear Chief");
+		Person sara = invigilator("Clear Sara");
+		create(fall, slot, room("F1"), chief, sara);
+		create(fall, slotAt(13, 0, 15, 0), room("F2"), chief);
+		assignmentService.createAssignment(new RoomAssignmentRequest(
+			spring.getId(), DAY.plusDays(30), room("S1").getId(), slot.getId(), null, null, chief.getId(), false, null, List.of(), null));
+		assertThat(personRepository.findById(chief.getId()).orElseThrow().getTotalAssignments()).isEqualTo(3);
+
+		var result = assignmentService.deleteAllInGroup(fall.getId());
+
+		assertThat(result.deleted()).isEqualTo(2);
+		assertThat(result.examPeriod()).isEqualTo(fall.getName());
+		assertThat(roomAssignmentRepository.findAllDetailedByScheduleGroupId(fall.getId())).isEmpty();
+		assertThat(roomAssignmentRepository.findAllDetailedByScheduleGroupId(spring.getId())).hasSize(1);
+		assertThat(personRepository.findById(chief.getId()).orElseThrow().getTotalAssignments()).isEqualTo(1);
+		assertThat(personRepository.findById(sara.getId()).orElseThrow().getTotalAssignments()).isZero();
+		assertThatThrownBy(() -> assignmentService.deleteAllInGroup(null)).isInstanceOf(com.uniguard.schedule.exception.ValidationException.class);
+	}
+
 	private TimeSlot slotAt(int startHour, int startMinute, int endHour, int endMinute) {
 		return timeSlotRepository.save(TimeSlot.builder()
 			.label(startHour + ":" + startMinute + "-" + endHour + ":" + endMinute)

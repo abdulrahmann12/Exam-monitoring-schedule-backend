@@ -216,6 +216,12 @@ class UserRolesTest {
 	}
 
 	@Test
+	void viewersCannotClearAnExamPeriod() throws Exception {
+		mockMvc.perform(authed(delete("/api/assignments").param("scheduleGroupId", UUID.randomUUID().toString()), token(VIEWER)))
+			.andExpect(status().isForbidden());
+	}
+
+	@Test
 	void changingTheNameNeedsASignIn() throws Exception {
 		mockMvc.perform(put("/api/auth/profile").header(CSRF_HEADER, "XMLHttpRequest")
 				.contentType(MediaType.APPLICATION_JSON).content("{\"displayName\":\"X\"}"))

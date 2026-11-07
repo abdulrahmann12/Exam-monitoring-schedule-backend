@@ -188,6 +188,7 @@ public final class Messages {
 	public static final String ASSIGNMENT_INVIGILATOR_DUPLICATE = "Duplicate invigilator ids are not allowed in the same room assignment.";
 	public static final String ASSIGNMENT_BULK_EMPTY = "At least one room assignment is required for bulk save.";
 	public static final String ASSIGNMENT_BULK_DUPLICATE_ROOM_SLOT = "Duplicate bulk assignment for room {0}, slot {1}, and date {2}.";
+	public static final String ASSIGNMENT_DELETE_ALL_NEEDS_PERIOD = "Choose the exam period whose assignments should be deleted.";
 	public static final String ASSIGNMENT_CHIEF_LIMIT = "Chief invigilator ''{0}'' is already supervising the maximum number of rooms at an overlapping time.";
 	public static final String ASSIGNMENT_INVIGILATOR_DOUBLE_BOOKED = "Invigilator ''{0}'' is already assigned at an overlapping time.";
 	public static final String ASSIGNMENT_CHIEF_UNAVAILABLE = "Chief invigilator ''{0}'' is unavailable on {1} ({2}).";

@@ -25,6 +25,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import com.uniguard.schedule.config.Messages;
 import com.uniguard.schedule.dto.assignment.BulkRoomAssignmentRequest;
+import com.uniguard.schedule.dto.assignment.DeleteAllAssignmentsResponse;
 import com.uniguard.schedule.dto.assignment.GeneratePreviewRequest;
 import com.uniguard.schedule.dto.assignment.GeneratePreviewResponse;
 import com.uniguard.schedule.dto.assignment.RoomAssignmentRequest;
@@ -183,6 +184,25 @@ public class AssignmentService {
         Map<UUID, Integer> previousOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(assignment);
         roomAssignmentRepository.delete(assignment);
         staffConcurrencyRules.applyWorkloadDelta(previousOccurrences, Map.of());
+    }
+
+    /**
+     * Removes every assignment of one exam period in a single transaction: either all of them go,
+     * or (on any error) none do. People, rooms, time slots and other periods are untouched.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public DeleteAllAssignmentsResponse deleteAllInGroup(UUID scheduleGroupId) {
+        demoModeService.rejectIfDemoUser("delete-all-assignments");
+        if (scheduleGroupId == null) {
+            throw new ValidationException(Messages.ASSIGNMENT_DELETE_ALL_NEEDS_PERIOD);
+        }
+        scheduleWriteLock.acquire();
+        ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
+        List<RoomAssignment> assignments = roomAssignmentRepository.findAllDetailedByScheduleGroupId(group.getId());
+        Map<UUID, Integer> previousOccurrences = StaffConcurrencyRules.countAssignmentOccurrences(assignments);
+        roomAssignmentRepository.deleteAll(assignments);
+        staffConcurrencyRules.applyWorkloadDelta(previousOccurrences, Map.of());
+        return new DeleteAllAssignmentsResponse(assignments.size(), group.getName());
     }
 
     // ─── Private helpers ────────────────────────────────────────────────────────
