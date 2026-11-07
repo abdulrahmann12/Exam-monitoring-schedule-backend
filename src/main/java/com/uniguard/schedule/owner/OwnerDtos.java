@@ -38,6 +38,20 @@ public final class OwnerDtos {
 	) {
 	}
 
+	/**
+	 * Permanently delete a (switched-off) university. Both fields guard against accidents:
+	 * the exact name of the university and the owner's own password.
+	 */
+	public record DeleteUniversityRequest(
+		@NotBlank @Size(max = 160) String confirmName,
+		@NotBlank @Size(max = 200) String password
+	) {
+	}
+
+	/** What a deletion removed (counts only). */
+	public record DeletedUniversity(String name, long accounts, long people, long rooms, long examRooms, long emails) {
+	}
+
 	public record AdminInfo(UUID id, String email, String displayName, boolean enabled, boolean signedIn, boolean invitationPending,
 		boolean twoFactorEnabled) {
 	}

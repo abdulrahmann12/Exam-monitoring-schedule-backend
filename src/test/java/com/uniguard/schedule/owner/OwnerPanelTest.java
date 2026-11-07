@@ -9,6 +9,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -26,6 +27,7 @@ import com.uniguard.schedule.service.SessionService;
 import com.uniguard.schedule.tenant.TenantContext;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -61,6 +63,7 @@ class OwnerPanelTest {
 	@Autowired private JwtTokenProvider jwt;
 	@Autowired private PasswordEncoder passwordEncoder;
 	@Autowired private PlatformTransactionManager transactionManager;
+	@Autowired private JdbcTemplate jdbc;
 
 	@Test
 	void theOwnerIsCreatedFromTheServerSettingsWithoutAUniversity() throws Exception {
@@ -161,6 +164,108 @@ class OwnerPanelTest {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.name").value("Renamed University " + slug));
 		login(email, "paused-admin-pass-1").andExpect(status().isOk());
+	}
+
+	@Test
+	void ownerDeletesASwitchedOffUniversityWithEverythingInItAndNothingElse() throws Exception {
+		String slug = slug();
+		String name = "Doomed University " + slug;
+		String email = "doomed-" + slug + "@owner.test";
+		JsonNode created = json(mockMvc.perform(ownerPost("/api/owner/universities", Map.of("name", name, "slug", slug, "adminEmail", email)))
+			.andExpect(status().isCreated()));
+		String id = created.get("university").get("id").asText();
+		acceptInvite(created.get("inviteLink").asText(), "doomed-admin-pass-1");
+		login(email, "doomed-admin-pass-1").andExpect(status().isOk());
+		String admin = token(email);
+
+		// Real data in every kind of table: people (with days and subjects), leave, room, slot, exam period, assignment.
+		String chief = json(mockMvc.perform(adminPost("/api/people", admin, Map.of("name", "Dr. Chief " + slug, "department", "Exams",
+			"role", "CHIEF_INVIGILATOR", "availableDays", List.of("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"), "subjectCodes", List.of("CS101"))))
+			.andExpect(status().isCreated())).get("id").asText();
+		String invigilator = json(mockMvc.perform(adminPost("/api/people", admin, Map.of("name", "Dr. Inv " + slug, "department", "Exams",
+			"role", "INVIGILATOR", "availableDays", List.of("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"))))
+			.andExpect(status().isCreated())).get("id").asText();
+		mockMvc.perform(adminPost("/api/people/" + invigilator + "/unavailability", admin, Map.of("startDate", "2027-01-10", "endDate", "2027-01-12")))
+			.andExpect(status().is2xxSuccessful());
+		String room = json(mockMvc.perform(adminPost("/api/rooms", admin, Map.of("name", "Doomed Hall", "capacity", 30, "type", "SMALL",
+			"minInvigilators", 1, "hallGender", "MIXED"))).andExpect(status().isCreated())).get("id").asText();
+		String slot = json(mockMvc.perform(adminPost("/api/slots", admin, Map.of("label", "Morning", "startTime", "09:00", "endTime", "11:00")))
+			.andExpect(status().is2xxSuccessful())).get("id").asText();
+		JsonNode groups = json(mockMvc.perform(authed(get("/api/schedule-groups"), admin)).andExpect(status().isOk()));
+		String group = (groups.has("content") ? groups.get("content") : groups).get(0).get("id").asText();
+		mockMvc.perform(adminPost("/api/assignments", admin, Map.of("scheduleGroupId", group, "examDate", "2027-01-03", "roomId", room,
+				"timeSlotId", slot, "chiefInvigilatorId", chief, "locked", false, "invigilatorIds", List.of(invigilator))))
+			.andExpect(status().is2xxSuccessful());
+
+		Map<String, Object> confirm = Map.of("confirmName", name, "password", OWNER_PASSWORD);
+		long universitiesBefore = universities.count();
+
+		// Still switched on → refused. Wrong password or wrong name → refused. Nothing is touched.
+		mockMvc.perform(ownerPost("/api/owner/universities/" + id + "/delete", confirm)).andExpect(status().isUnprocessableEntity());
+		mockMvc.perform(ownerPut("/api/owner/universities/" + id, Map.of("name", name, "active", false))).andExpect(status().isOk());
+		mockMvc.perform(ownerPost("/api/owner/universities/" + id + "/delete", Map.of("confirmName", name, "password", "wrong-password-9")))
+			.andExpect(status().isBadRequest());
+		mockMvc.perform(ownerPost("/api/owner/universities/" + id + "/delete", Map.of("confirmName", name.toLowerCase(), "password", OWNER_PASSWORD)))
+			.andExpect(status().isBadRequest());
+		mockMvc.perform(ownerPost("/api/owner/universities/" + id + "/delete", Map.of("confirmName", "", "password", OWNER_PASSWORD)))
+			.andExpect(status().isBadRequest());
+		assertThat(universities.count()).isEqualTo(universitiesBefore);
+		assertThat(users.findByEmailIgnoreCase(email)).isPresent();
+
+		JsonNode deleted = json(mockMvc.perform(ownerPost("/api/owner/universities/" + id + "/delete", confirm)).andExpect(status().isOk()));
+		assertThat(deleted.get("name").asText()).isEqualTo(name);
+		assertThat(deleted.get("accounts").asLong()).isEqualTo(1);
+		assertThat(deleted.get("people").asLong()).isEqualTo(2);
+		assertThat(deleted.get("rooms").asLong()).isEqualTo(1);
+		assertThat(deleted.get("examRooms").asLong()).isEqualTo(1);
+
+		// Gone: the university, its account (old token refused), and no row anywhere still points at it.
+		assertThat(universities.count()).isEqualTo(universitiesBefore - 1);
+		assertThat(users.findByEmailIgnoreCase(email)).isEmpty();
+		mockMvc.perform(authed(get("/api/rooms"), admin)).andExpect(status().isUnauthorized());
+		login(email, "doomed-admin-pass-1").andExpect(status().isUnauthorized());
+		mockMvc.perform(authed(get("/api/owner/universities"), token(OWNER)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.universities[?(@.id == '" + id + "')]").isEmpty());
+		for (String table : List.of("people", "rooms", "time_slots", "schedule_groups", "room_assignments", "invigilator_assignments",
+			"person_unavailability", "settings", "email_outbox", "audit_events", "admin_users")) {
+			assertThat(jdbc.queryForObject("select count(*) from " + table
+				+ " where university_id is not null and university_id not in (select id from universities)", Long.class))
+				.as("rows of a deleted university left in " + table).isZero();
+		}
+		for (String table : List.of("person_available_days", "person_subject_codes")) {
+			assertThat(jdbc.queryForObject("select count(*) from " + table + " where person_id not in (select id from people)", Long.class))
+				.as("rows of deleted people left in " + table).isZero();
+		}
+		for (String table : List.of("user_sessions", "account_tokens", "mfa_recovery_codes", "mfa_challenges", "user_identities", "sso_states")) {
+			assertThat(jdbc.queryForObject("select count(*) from " + table + " where user_id not in (select id from admin_users)", Long.class))
+				.as("rows of deleted accounts left in " + table).isZero();
+		}
+
+		// Other universities keep working, and the owner's log keeps one platform-level record of the deletion.
+		login(DEFAULT_ADMIN, "test-password").andExpect(status().isOk());
+		JsonNode log = json(mockMvc.perform(authed(get("/api/owner/activity?size=100"), token(OWNER)))).get("content");
+		assertThat(log.toString()).contains("UNIVERSITY_DELETED").contains("Deleted university '" + name + "'");
+
+		// Deleting it again: not found.
+		mockMvc.perform(ownerPost("/api/owner/universities/" + id + "/delete", confirm)).andExpect(status().isNotFound());
+	}
+
+	@Test
+	void theFirstUniversityCannotBeDeletedAndOnlyTheOwnerMayDelete() throws Exception {
+		String defaultName = universities.findById(TenantContext.DEFAULT_UNIVERSITY_ID).orElseThrow().getName();
+		mockMvc.perform(ownerPost("/api/owner/universities/" + TenantContext.DEFAULT_UNIVERSITY_ID + "/delete",
+				Map.of("confirmName", defaultName, "password", OWNER_PASSWORD)))
+			.andExpect(status().isUnprocessableEntity());
+		assertThat(universities.findById(TenantContext.DEFAULT_UNIVERSITY_ID)).isPresent();
+
+		mockMvc.perform(ownerPost("/api/owner/universities/" + UUID.randomUUID() + "/delete",
+			Map.of("confirmName", "Nothing", "password", OWNER_PASSWORD))).andExpect(status().isNotFound());
+
+		// A university administrator cannot reach it, not even for their own university.
+		mockMvc.perform(adminPost("/api/owner/universities/" + TenantContext.DEFAULT_UNIVERSITY_ID + "/delete", token(DEFAULT_ADMIN),
+			Map.of("confirmName", defaultName, "password", "test-password"))).andExpect(status().isForbidden());
+		assertThat(universities.findById(TenantContext.DEFAULT_UNIVERSITY_ID)).isPresent();
 	}
 
 	@Test
@@ -315,6 +420,10 @@ class OwnerPanelTest {
 
 	private MockHttpServletRequestBuilder ownerPost(String path, Object body) throws Exception {
 		return authed(post(path), token(OWNER)).contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(body));
+	}
+
+	private MockHttpServletRequestBuilder adminPost(String path, String token, Object body) throws Exception {
+		return authed(post(path), token).contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(body));
 	}
 
 	private MockHttpServletRequestBuilder ownerPut(String path, Object body) throws Exception {
