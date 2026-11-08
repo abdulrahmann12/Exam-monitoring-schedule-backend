@@ -148,6 +148,9 @@ public final class Messages {
 	public static final String OWNER_SLUG_EXISTS = "Another university already uses this short code.";
 	public static final String OWNER_NAME_EXISTS = "Another university already has this name.";
 	public static final String OWNER_EMAIL_IN_OTHER_UNIVERSITY = "This email already belongs to an account. Use a different email.";
+	public static final String OWNER_DELETE_DEFAULT = "The first university cannot be deleted; the server creates it again on every start. Switch it off instead.";
+	public static final String OWNER_DELETE_STILL_ACTIVE = "Switch the university off first, then delete it.";
+	public static final String OWNER_DELETE_NAME_MISMATCH = "Type the university's exact name to confirm.";
 	public static final String OWNER_ADMIN_ALREADY_ACTIVE = "This administrator has already signed in. They can use \"Forgot password\" if needed.";
 
 

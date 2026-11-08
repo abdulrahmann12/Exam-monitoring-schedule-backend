@@ -32,6 +32,8 @@ import com.uniguard.schedule.owner.OwnerDtos.AddAdminRequest;
 import com.uniguard.schedule.owner.OwnerDtos.AdminInfo;
 import com.uniguard.schedule.owner.OwnerDtos.AdminInvitation;
 import com.uniguard.schedule.owner.OwnerDtos.CreateUniversityRequest;
+import com.uniguard.schedule.owner.OwnerDtos.DeleteUniversityRequest;
+import com.uniguard.schedule.owner.OwnerDtos.DeletedUniversity;
 import com.uniguard.schedule.owner.OwnerDtos.Overview;
 import com.uniguard.schedule.owner.OwnerDtos.PlatformTotals;
 import com.uniguard.schedule.owner.OwnerDtos.UniversitySummary;
@@ -39,10 +41,12 @@ import com.uniguard.schedule.owner.OwnerDtos.UpdateUniversityRequest;
 import com.uniguard.schedule.repository.AdminUserRepository;
 import com.uniguard.schedule.repository.AuditEventRepository;
 import com.uniguard.schedule.repository.UniversityRepository;
+import com.uniguard.schedule.security.PasswordPolicy;
 import com.uniguard.schedule.security.SecureTokens;
 import com.uniguard.schedule.service.AccountEmailService;
 import com.uniguard.schedule.service.AccountTokenService;
 import com.uniguard.schedule.service.SessionService;
+import com.uniguard.schedule.tenant.TenantContext;
 import com.uniguard.schedule.tenant.UniversityProvisioning;
 
 import java.nio.ByteBuffer;
@@ -264,6 +268,74 @@ public class PlatformOwnerService {
 				"Reset two-step sign-in of " + admin.getEmail() + " (administrator of '" + university.getName() + "')"));
 		});
 		return summaryOf(universityId);
+	}
+
+	/**
+	 * Permanently deletes a university and <em>everything</em> in it: people, rooms, time slots, exam periods,
+	 * assignments, settings, emails, its activity log and its accounts (with their sessions, links, two-step
+	 * and SSO data). One transaction: either all of it goes or nothing does.
+	 *
+	 * <p>Guards: the owner's own password, the university's exact name, the university must already be
+	 * switched off (so nobody works in it meanwhile; switching off signed everyone out), and the first
+	 * university can never be deleted (the server re-creates it on start and the demo account lives there).
+	 *
+	 * <p>Plain SQL on purpose, children before parents, every table explicitly: the local H2 database has no
+	 * "on delete cascade" rules, and Hibernate's university filter would hide the rows from the owner.
+	 * The university is addressed through its unique short code, so no id has to be bound as BINARY(16) vs UUID.
+	 * Only a platform-level record of the deletion stays (in the owner's activity log).
+	 */
+	public DeletedUniversity deleteUniversity(UUID id, UUID ownerId, @Valid DeleteUniversityRequest request) {
+		AdminUser owner = users.findById(ownerId)
+			.filter(user -> user.getRole() == AdminRole.SUPER_ADMIN)
+			.orElseThrow(() -> new NotFoundException(Messages.USER_NOT_FOUND));
+		String password = request.password();
+		if (PasswordPolicy.exceedsMaximum(password) || !passwordEncoder.matches(password, owner.getPasswordHash())) {
+			throw new ValidationException(Messages.AUTH_CURRENT_PASSWORD_WRONG);
+		}
+		if (TenantContext.DEFAULT_UNIVERSITY_ID.equals(id)) {
+			throw new BusinessRuleViolationException(Messages.OWNER_DELETE_DEFAULT);
+		}
+
+		DeletedUniversity deleted = transaction.execute(status -> {
+			University university = requireUniversity(id);
+			if (university.isActive()) {
+				throw new BusinessRuleViolationException(Messages.OWNER_DELETE_STILL_ACTIVE);
+			}
+			if (!university.getName().equals(request.confirmName().trim())) {
+				throw new ValidationException(Messages.OWNER_DELETE_NAME_MISMATCH);
+			}
+			String slug = university.getSlug();
+			String uni = "(select u.id from universities u where u.slug = ?)";
+			String ofUsers = "user_id in (select a.id from admin_users a where a.university_id = " + uni + ")";
+			String ofPeople = "person_id in (select p.id from people p where p.university_id = " + uni + ")";
+
+			jdbc.update("delete from invigilator_assignments where university_id = " + uni, slug);
+			long examRooms = jdbc.update("delete from room_assignments where university_id = " + uni, slug);
+			jdbc.update("delete from person_unavailability where university_id = " + uni, slug);
+			jdbc.update("delete from person_subject_codes where " + ofPeople, slug);
+			jdbc.update("delete from person_available_days where " + ofPeople, slug);
+			long people = jdbc.update("delete from people where university_id = " + uni, slug);
+			jdbc.update("delete from time_slots where university_id = " + uni, slug);
+			jdbc.update("delete from schedule_groups where university_id = " + uni, slug);
+			long rooms = jdbc.update("delete from rooms where university_id = " + uni, slug);
+			jdbc.update("delete from settings where university_id = " + uni, slug);
+			long emails = jdbc.update("delete from email_outbox where university_id = " + uni, slug);
+			jdbc.update("delete from audit_events where university_id = " + uni, slug);
+			for (String table : List.of("user_sessions", "account_tokens", "mfa_recovery_codes", "mfa_challenges", "user_identities", "sso_states")) {
+				jdbc.update("delete from " + table + " where " + ofUsers, slug);
+			}
+			long accounts = jdbc.update("delete from admin_users where university_id = " + uni, slug);
+			if (jdbc.update("delete from universities where slug = ?", slug) != 1) {
+				throw new IllegalStateException("University '" + slug + "' was not deleted");
+			}
+
+			String name = university.getName();
+			auditService.recordAfterCommit(entry("UNIVERSITY_DELETED", university, "Deleted university '" + name + "' (" + slug + "): "
+				+ accounts + " account(s), " + people + " people, " + rooms + " room(s), " + examRooms + " exam room(s), " + emails + " email(s)"));
+			return new DeletedUniversity(name, accounts, people, rooms, examRooms, emails);
+		});
+		LOGGER.warn("[OWNER] Deleted university '{}' ({} accounts, {} people).", deleted.name(), deleted.accounts(), deleted.people());
+		return deleted;
 	}
 
 	// ─────────────────────────── Helpers ───────────────────────────

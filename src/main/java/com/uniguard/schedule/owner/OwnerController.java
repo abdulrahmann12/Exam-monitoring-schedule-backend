@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,9 +18,12 @@ import org.springframework.web.bind.annotation.RestController;
 import com.uniguard.schedule.audit.AuditController.AuditEventResponse;
 import com.uniguard.schedule.config.PageRequestFactory;
 import com.uniguard.schedule.dto.common.PageResponse;
+import com.uniguard.schedule.security.AppUserPrincipal;
 import com.uniguard.schedule.owner.OwnerDtos.AddAdminRequest;
 import com.uniguard.schedule.owner.OwnerDtos.AdminInvitation;
 import com.uniguard.schedule.owner.OwnerDtos.CreateUniversityRequest;
+import com.uniguard.schedule.owner.OwnerDtos.DeleteUniversityRequest;
+import com.uniguard.schedule.owner.OwnerDtos.DeletedUniversity;
 import com.uniguard.schedule.owner.OwnerDtos.Overview;
 import com.uniguard.schedule.owner.OwnerDtos.UniversitySummary;
 import com.uniguard.schedule.owner.OwnerDtos.UpdateUniversityRequest;
@@ -54,6 +58,13 @@ public class OwnerController {
 	@PutMapping("/universities/{id}")
 	public UniversitySummary update(@PathVariable UUID id, @Valid @RequestBody UpdateUniversityRequest request) {
 		return ownerService.updateUniversity(id, request);
+	}
+
+	/** POST (not DELETE) so the confirmation body is never dropped by a proxy. */
+	@PostMapping("/universities/{id}/delete")
+	public DeletedUniversity delete(@PathVariable UUID id, @AuthenticationPrincipal AppUserPrincipal owner,
+		@Valid @RequestBody DeleteUniversityRequest request) {
+		return ownerService.deleteUniversity(id, owner.getId(), request);
 	}
 
 	@PostMapping("/universities/{id}/admins")
