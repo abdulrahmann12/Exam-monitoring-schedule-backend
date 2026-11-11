@@ -332,17 +332,6 @@ final class TimetableColumns {
 		return true;
 	}
 
-	/** True when the row gives no time at all (no time column, or its time cells are empty). */
-	boolean timeBlank(TabularFile.DataRow row) {
-		if (has(Field.START) && has(Field.END)) {
-			return cell(row, Field.START).isBlank() && cell(row, Field.END).isBlank();
-		}
-		if (has(Field.SLOT)) {
-			return cell(row, Field.SLOT).isBlank();
-		}
-		return true;
-	}
-
 	/** Start and end: separate start/end columns, or one "09:00 - 12:00" column. Null with errors added when wrong. */
 	LocalTime[] times(TabularFile.DataRow row, List<String> errors) {
 		LocalTime start = null;
