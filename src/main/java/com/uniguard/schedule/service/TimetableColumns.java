@@ -1,8 +1,11 @@
 package com.uniguard.schedule.service;
 
+import com.uniguard.schedule.config.Messages;
 import com.uniguard.schedule.exception.ValidationException;
+import com.uniguard.schedule.util.NameNormalizationUtil;
 import com.uniguard.schedule.util.TabularFile;
 
+import java.text.MessageFormat;
 import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -35,12 +38,13 @@ import java.util.regex.Pattern;
  */
 final class TimetableColumns {
 
-	enum Field { DATE, SLOT, START, END, ROOM, BUILDING, NAME, CODE, SUBJECT_AREA, CATALOG, STUDENTS }
+	enum Field { DATE, DAY, SLOT, START, END, ROOM, BUILDING, NAME, CODE, SUBJECT_AREA, CATALOG, STUDENTS, ROOM_TYPE, GENDER }
 
 	private static final Map<Field, Set<String>> ALIASES = new LinkedHashMap<>();
 
 	static {
 		ALIASES.put(Field.DATE, Set.of("date", "dateyyyymmdd", "examdate", "examinationdate", "meetingdate", "testdate", "examday"));
+		ALIASES.put(Field.DAY, Set.of("day", "dayname", "weekday", "dayofweek", "dayoftheweek"));
 		ALIASES.put(Field.SLOT, Set.of("timeslot", "slot", "examslot", "time", "examtime", "sessiontime"));
 		ALIASES.put(Field.START, Set.of("starttime", "examstarttime", "begintime", "beginningtime", "fromtime", "timefrom", "from", "start", "begin", "meetingstarttime"));
 		ALIASES.put(Field.END, Set.of("endtime", "examendtime", "finishtime", "totime", "timeto", "to", "end", "finish", "meetingendtime"));
@@ -50,6 +54,8 @@ final class TimetableColumns {
 		ALIASES.put(Field.CODE, Set.of("subjectcode", "coursecode", "courseid", "course", "code", "module", "modulecode", "examcode"));
 		ALIASES.put(Field.SUBJECT_AREA, Set.of("subject", "subj", "subjectarea", "subjcode"));
 		ALIASES.put(Field.CATALOG, Set.of("coursenumber", "crsenumb", "catalognbr", "catalognumber", "catalog", "crse", "courseno", "coursenum"));
+		ALIASES.put(Field.GENDER, Set.of("gender", "studentgender", "studentsgender", "hallgender", "sex", "malefemale"));
+		ALIASES.put(Field.ROOM_TYPE, Set.of("roomtype", "roomkind", "roomcategory", "typeofroom", "venuetype", "roomtypeoptional"));
 		ALIASES.put(Field.STUDENTS, Set.of("students", "studentsoptional", "studentcount", "enrollment", "enrolment", "enrltot", "enrolled",
 			"actualenrollment", "actualenrolment", "headcount", "noofstudents", "numberofstudents", "totalstudents", "candidates", "noofcandidates"));
 	}
@@ -62,6 +68,19 @@ final class TimetableColumns {
 
 	/** Recognises the columns from the header row; fails with a clear message when the essentials are missing. */
 	static TimetableColumns of(List<String> headers) {
+		return of(headers, true, true);
+	}
+
+	static TimetableColumns of(List<String> headers, boolean roomRequired) {
+		return of(headers, roomRequired, true);
+	}
+
+	/**
+	 * @param roomRequired false for room allocation, where the system picks the rooms and a room
+	 *                     column (if any) is ignored
+	 */
+	/** @param timeRequired false for room allocation: an empty or missing time slot is chosen by the system */
+	static TimetableColumns of(List<String> headers, boolean roomRequired, boolean timeRequired) {
 		TimetableColumns result = new TimetableColumns();
 		for (int index = 0; index < headers.size(); index++) {
 			String key = normalize(headers.get(index));
@@ -73,8 +92,9 @@ final class TimetableColumns {
 				}
 			}
 		}
-		boolean hasTime = result.has(Field.SLOT) || (result.has(Field.START) && result.has(Field.END));
-		if (!result.has(Field.DATE) || !result.has(Field.ROOM) || !hasTime) {
+		boolean hasTime = !timeRequired || result.has(Field.SLOT) || (result.has(Field.START) && result.has(Field.END));
+		boolean roomMissing = roomRequired && !result.has(Field.ROOM);
+		if (!result.has(Field.DATE) || roomMissing || !hasTime) {
 			List<String> missing = new ArrayList<>();
 			if (!result.has(Field.DATE)) {
 				missing.add("date (e.g. \"Date\" or \"Exam Date\")");
@@ -82,7 +102,7 @@ final class TimetableColumns {
 			if (!hasTime) {
 				missing.add("time (\"Time Slot\", or \"Start Time\" and \"End Time\")");
 			}
-			if (!result.has(Field.ROOM)) {
+			if (roomMissing) {
 				missing.add("room (e.g. \"Room\", \"Classroom\" or \"Facility ID\")");
 			}
 			throw new ValidationException("Could not find these columns in the first row: " + String.join(", ", missing)
@@ -139,6 +159,7 @@ final class TimetableColumns {
 	private static String label(Field field) {
 		return switch (field) {
 			case DATE -> "date";
+			case DAY -> "day";
 			case SLOT -> "time slot";
 			case START -> "start time";
 			case END -> "end time";
@@ -149,6 +170,8 @@ final class TimetableColumns {
 			case SUBJECT_AREA -> "subject";
 			case CATALOG -> "course number";
 			case STUDENTS -> "students";
+			case ROOM_TYPE -> "room type";
+			case GENDER -> "gender";
 		};
 	}
 
@@ -280,5 +303,82 @@ final class TimetableColumns {
 		LocalTime start = parseTime(parts[0]);
 		LocalTime end = parseTime(parts[1]);
 		return start == null || end == null ? null : new LocalTime[] {start, end};
+	}
+
+	// ─────────────────────────── Shared row helpers ───────────────────────────
+
+	private static final DateTimeFormatter HH_MM = DateTimeFormatter.ofPattern("HH:mm");
+
+	/** "DAY_FIRST" / "MONTH_FIRST"; empty or "AUTO" = null (decide from the file). */
+	static DateOrder parseDateOrder(String value) {
+		if (value == null || value.isBlank() || "AUTO".equalsIgnoreCase(value)) {
+			return null;
+		}
+		try {
+			return DateOrder.valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
+		} catch (IllegalArgumentException ex) {
+			throw new ValidationException("dateOrder must be DAY_FIRST, MONTH_FIRST or empty.");
+		}
+	}
+
+	/** True when the row gives no time at all (no time column, or its time cells are empty). */
+	boolean timeBlank(TabularFile.DataRow row) {
+		if (has(Field.START) && has(Field.END)) {
+			return cell(row, Field.START).isBlank() && cell(row, Field.END).isBlank();
+		}
+		if (has(Field.SLOT)) {
+			return cell(row, Field.SLOT).isBlank();
+		}
+		return true;
+	}
+
+	/** True when the row gives no time at all (no time column, or its time cells are empty). */
+	boolean timeBlank(TabularFile.DataRow row) {
+		if (has(Field.START) && has(Field.END)) {
+			return cell(row, Field.START).isBlank() && cell(row, Field.END).isBlank();
+		}
+		if (has(Field.SLOT)) {
+			return cell(row, Field.SLOT).isBlank();
+		}
+		return true;
+	}
+
+	/** Start and end: separate start/end columns, or one "09:00 - 12:00" column. Null with errors added when wrong. */
+	LocalTime[] times(TabularFile.DataRow row, List<String> errors) {
+		LocalTime start = null;
+		LocalTime end = null;
+		if (has(TimetableColumns.Field.START) && has(TimetableColumns.Field.END)) {
+			TabularFile.CellValue startCell = cell(row, TimetableColumns.Field.START);
+			TabularFile.CellValue endCell = cell(row, TimetableColumns.Field.END);
+			start = parseTime(startCell);
+			end = parseTime(endCell);
+			if (start == null) {
+				errors.add(startCell.text().isBlank() ? "Start time is required." : "Start time \"" + startCell.text() + "\" is not a time (use e.g. 09:00).");
+			}
+			if (end == null) {
+				errors.add(endCell.text().isBlank() ? "End time is required." : "End time \"" + endCell.text() + "\" is not a time (use e.g. 12:00).");
+			}
+		} else {
+			String text = NameNormalizationUtil.normalizeWhitespace(text(row, TimetableColumns.Field.SLOT));
+			if (text == null || text.isBlank()) {
+				errors.add(Messages.SCHEDULE_BULK_ROW_SLOT_REQUIRED);
+				return null;
+			}
+			LocalTime[] range = parseRange(text);
+			if (range == null) {
+				errors.add(MessageFormat.format(Messages.SCHEDULE_BULK_ROW_SLOT_INVALID_FORMAT, text));
+				return null;
+			}
+			start = range[0];
+			end = range[1];
+		}
+		if (start == null || end == null) {
+			return null;
+		}
+		if (!end.isAfter(start)) {
+			errors.add("The exam must end after it starts (" + start.format(HH_MM) + " – " + end.format(HH_MM) + ").");
+			return null;
+		}
+		return new LocalTime[] {start, end};
 	}
 }

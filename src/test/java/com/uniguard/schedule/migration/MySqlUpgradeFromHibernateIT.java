@@ -93,7 +93,9 @@ class MySqlUpgradeFromHibernateIT {
 			+ "(X'00000000000000000000000000000022', 0, now(6), '12:00:00', 'Morning', 2, '09:00:00', now(6), X'00000000000000000000000000000011')");
 		s.execute("INSERT INTO rooms (id, active, capacity, created_at, min_invigilators, name, normalized_name, type, updated_at) VALUES "
 			+ "(X'00000000000000000000000000000030', 1, 40, now(6), 1, 'Hall A', 'hall a', 'MEDIUM', now(6)),"
-			+ "(X'00000000000000000000000000000031', 1, 80, now(6), 2, 'Hall B', NULL, 'LARGE', now(6))");
+			+ "(X'00000000000000000000000000000031', 1, 80, now(6), 2, 'Hall B', NULL, 'LARGE', now(6)),"
+			+ "(X'00000000000000000000000000000032', 1, 30, now(6), 1, 'M209 (Lab)', 'm209 (lab)', 'SMALL', now(6)),"
+			+ "(X'00000000000000000000000000000033', 1, 30, now(6), 1, 'Label Hall', 'label hall', 'SMALL', now(6))");
 		s.execute("INSERT INTO people (id, active, created_at, department, email, max_parallel_rooms, name, normalized_name, role, total_assignments, updated_at) VALUES "
 			+ "(X'00000000000000000000000000000040', 1, now(6), 'Physics', 'chief@legacy.test', 1, 'Dr. Chief', 'dr. chief', 'CHIEF_INVIGILATOR', 3, now(6)),"
 			+ "(X'00000000000000000000000000000041', 1, now(6), 'Maths', 'inv@legacy.test', 1, 'Sara Inv', NULL, 'INVIGILATOR', 1, now(6)),"
@@ -140,7 +142,7 @@ class MySqlUpgradeFromHibernateIT {
 
 		// Every row is still there.
 		assertThat(count(jdbcTemplate, "people")).isEqualTo(3);
-		assertThat(count(jdbcTemplate, "rooms")).isEqualTo(2);
+		assertThat(count(jdbcTemplate, "rooms")).isEqualTo(4);
 		assertThat(count(jdbcTemplate, "room_assignments")).isEqualTo(4);
 		assertThat(count(jdbcTemplate, "invigilator_assignments")).isEqualTo(2);
 		assertThat(count(jdbcTemplate, "person_available_days")).isEqualTo(3);
@@ -173,6 +175,9 @@ class MySqlUpgradeFromHibernateIT {
 			.isEqualTo(1);
 		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE LOWER(table_name) LIKE 'v16_%'", Integer.class)).isZero();
 		assertThat(jdbcTemplate.queryForObject("SELECT chief_max_parallel_rooms FROM settings WHERE id = " + UNI, Integer.class)).isEqualTo(2);
+		// V18: room types table and the rooms' type column exist (the types themselves are created at start-up).
+		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM rooms WHERE room_category_id IS NULL OR room_category_id IS NOT NULL", Integer.class)).isEqualTo(4);
+		assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM room_categories WHERE name = 'Classroom' AND special = 0", Integer.class)).isGreaterThanOrEqualTo(0);
 
 		Integer versionColumns = jdbcTemplate.queryForObject("""
 			SELECT COUNT(*) FROM information_schema.columns

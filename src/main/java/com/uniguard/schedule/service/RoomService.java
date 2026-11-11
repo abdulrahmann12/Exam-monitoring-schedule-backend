@@ -35,6 +35,7 @@ public class RoomService {
 	private final RoomMapper roomMapper;
 	private final NormalizedNameMaintenanceService normalizedNameMaintenanceService;
 	private final DemoModeService demoModeService;
+	private final RoomCategoryService roomCategoryService;
 
 	public PageResponse<RoomResponse> getRooms(RoomType type, String name, Integer minCapacity, Integer maxCapacity, Pageable pageable) {
 		// Convert name to a prefix pattern on normalizedName to allow B-tree index usage.
@@ -52,6 +53,8 @@ public class RoomService {
 		normalizedNameMaintenanceService.synchronizeRooms();
 		validateUniqueName(request.name(), null);
 		Room room = roomMapper.toEntity(request);
+		room.setCategory(request.roomCategoryId() != null ? roomCategoryService.require(request.roomCategoryId()) : roomCategoryService.guessFor(request.name()));
+		room.setActive(request.active() == null || request.active());
 		return roomMapper.toResponse(roomRepository.save(room));
 	}
 
@@ -61,6 +64,12 @@ public class RoomService {
 		Room room = getRoomEntity(id);
 		validateUniqueName(request.name(), id);
 		roomMapper.updateEntity(request, room);
+		if (request.roomCategoryId() != null) {
+			room.setCategory(roomCategoryService.require(request.roomCategoryId()));
+		}
+		if (request.active() != null) {
+			room.setActive(request.active()); // existing exams in the room are kept
+		}
 		return roomMapper.toResponse(roomRepository.save(room));
 	}
 

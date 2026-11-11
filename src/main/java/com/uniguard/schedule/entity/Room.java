@@ -1,6 +1,11 @@
 package com.uniguard.schedule.entity;
 
 import org.hibernate.annotations.TenantId;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
@@ -77,9 +82,25 @@ public class Room {
 	@Column(nullable = false)
 	private int minInvigilators;
 
+	/** false = out of service (e.g. maintenance): never offered for new exams. Existing exams are kept. */
 	@Builder.Default
 	@Column(nullable = false)
 	private boolean active = true;
+
+	/**
+	 * The room type (V18), e.g. "Classroom" or "Computer Lab". Empty = a normal room. A special type is only
+	 * given automatically to exams that ask for it; it can always be chosen by hand in the Scheduler.
+	 */
+	@ToString.Exclude
+	@EqualsAndHashCode.Exclude
+	@ManyToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "room_category_id")
+	private RoomCategory category;
+
+	/** True when the room has a special type (lab, studio, ...). */
+	public boolean isSpecial() {
+		return category != null && category.isSpecial();
+	}
 
 	/** MIXED = anyone may supervise; MALE/FEMALE = only staff of that gender (gender-separated halls). */
 	@Builder.Default

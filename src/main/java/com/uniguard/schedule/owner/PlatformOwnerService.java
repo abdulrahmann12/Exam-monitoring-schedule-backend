@@ -318,6 +318,7 @@ public class PlatformOwnerService {
 			jdbc.update("delete from time_slots where university_id = " + uni, slug);
 			jdbc.update("delete from schedule_groups where university_id = " + uni, slug);
 			long rooms = jdbc.update("delete from rooms where university_id = " + uni, slug);
+			jdbc.update("delete from room_categories where university_id = " + uni, slug);
 			jdbc.update("delete from settings where university_id = " + uni, slug);
 			long emails = jdbc.update("delete from email_outbox where university_id = " + uni, slug);
 			jdbc.update("delete from audit_events where university_id = " + uni, slug);

@@ -29,14 +29,17 @@ public class UniversityProvisioning {
 	private final UniversityRepository universities;
 	private final SettingsRepository settingsRepository;
 	private final ScheduleGroupSupport scheduleGroupSupport;
+	private final com.uniguard.schedule.service.RoomCategoryService roomCategoryService;
 	private final TransactionTemplate transaction;
 
 	public UniversityProvisioning(
 		UniversityRepository universities,
 		SettingsRepository settingsRepository,
 		ScheduleGroupSupport scheduleGroupSupport,
+		com.uniguard.schedule.service.RoomCategoryService roomCategoryService,
 		PlatformTransactionManager transactionManager
 	) {
+		this.roomCategoryService = roomCategoryService;
 		this.universities = universities;
 		this.settingsRepository = settingsRepository;
 		this.scheduleGroupSupport = scheduleGroupSupport;
@@ -72,7 +75,13 @@ public class UniversityProvisioning {
 				settingsRepository.save(settings);
 			}
 			scheduleGroupSupport.ensureDefaultGroupAndAttachOrphans();
+			roomCategoryService.ensureDefaults();
 		}));
+	}
+
+	/** Default room types for a university that already exists (run on every start, does nothing twice). */
+	public void ensureRoomTypes(UUID universityId) {
+		TenantContext.runAs(universityId, () -> transaction.executeWithoutResult(status -> roomCategoryService.ensureDefaults()));
 	}
 
 	/** A new, empty university ready to use. */

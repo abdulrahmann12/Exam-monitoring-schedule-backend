@@ -49,6 +49,9 @@ public final class AuditRoutes {
 		route("POST /api/rooms", "ROOM_CREATED", AuditCategory.ROOMS, "ROOM", null, named("Added room")),
 		route("PUT /api/rooms/{id}", "ROOM_UPDATED", AuditCategory.ROOMS, "ROOM", "id", named("Edited room")),
 		route("DELETE /api/rooms/{id}", "ROOM_DELETED", AuditCategory.ROOMS, "ROOM", "id", named("Deleted room")),
+		route("POST /api/room-categories", "ROOM_TYPE_CREATED", AuditCategory.ROOMS, "ROOM_TYPE", null, named("Added room type")),
+		route("PUT /api/room-categories/{id}", "ROOM_TYPE_UPDATED", AuditCategory.ROOMS, "ROOM_TYPE", "id", named("Edited room type")),
+		route("DELETE /api/room-categories/{id}", "ROOM_TYPE_DELETED", AuditCategory.ROOMS, "ROOM_TYPE", "id", named("Deleted room type")),
 		route("POST /api/bulk/rooms/upload", "ROOMS_IMPORTED", AuditCategory.ROOMS, null, null, imported("rooms")),
 
 		route("POST /api/slots", "TIME_SLOT_CREATED", AuditCategory.TIME_SLOTS, "TIME_SLOT", null, named("Added time slot")),
@@ -65,6 +68,13 @@ public final class AuditRoutes {
 				? ": " + r.queued() + " queued, " + r.unchanged() + " unchanged, " + r.skipped() + " without email" : "")),
 		route("POST /api/email-outbox/{id}/retry", "EMAIL_RETRIED", AuditCategory.SCHEDULES, "EMAIL", "id", (body, name) -> "Sent a failed email again"),
 		route("POST /api/email-outbox/retry-failed", "EMAILS_RETRIED", AuditCategory.SCHEDULES, "EMAIL", null, (body, name) -> "Sent all failed emails again"),
+		route("POST /api/room-allocation/save", "ROOMS_ALLOCATED", AuditCategory.SCHEDULES, null, null, (body, name) ->
+			"Saved automatic room allocation" + (body instanceof com.uniguard.schedule.dto.allocation.RoomAllocationResults.Saved r
+				? ": " + r.roomAssignmentsCreated() + " exam rooms" + (r.studentsUnplaced() > 0 ? ", " + r.studentsUnplaced() + " students without a seat" : "") : "")),
+		route("POST /api/room-allocation/staff", "SCHEDULE_CREATED", AuditCategory.SCHEDULES, null, null, (body, name) ->
+			"Created schedule (staff) for allocated rooms" + (body instanceof com.uniguard.schedule.dto.allocation.RoomAllocationResults.Staffed r
+				? ": " + r.examRooms() + " exam rooms, chiefs " + r.chiefSlotsFilled() + "/" + r.chiefSlotsTotal()
+					+ ", invigilators " + r.invigilatorSlotsFilled() + "/" + r.invigilatorSlotsTotal() : "")),
 		route("POST /api/schedule-groups/{id}/bulk-upload", "SCHEDULE_IMPORTED", AuditCategory.SCHEDULES, "SCHEDULE_GROUP", "id", (body, name) ->
 			"Imported schedule from Excel into " + quote(name) + (body instanceof ScheduleBulkUploadResultDTO r
 				? ": " + r.roomAssignmentsCreated() + " exam rooms" : "")),
@@ -95,7 +105,8 @@ public final class AuditRoutes {
 		"/api/auth/",
 		"/api/users",
 		"/api/owner/",
-		"/api/assignments/generate-preview"
+		"/api/assignments/generate-preview",
+		"/api/room-allocation/preview"
 	);
 
 	private AuditRoutes() {
@@ -152,6 +163,9 @@ public final class AuditRoutes {
 		}
 		if (body instanceof RoomResponse r) {
 			return r.name();
+		}
+		if (body instanceof com.uniguard.schedule.dto.room.RoomCategoryDtos.RoomCategoryResponse t) {
+			return t.name();
 		}
 		if (body instanceof TimeSlotResponse t) {
 			return t.label();

@@ -19,6 +19,9 @@ public interface RoomRepository extends JpaRepository<Room, UUID> {
 
 	long countByActiveTrue();
 
+	/** Rooms of one room type (a type in use cannot be deleted). */
+	long countByCategoryId(UUID categoryId);
+
 	Optional<Room> findByNormalizedName(String normalizedName);
 
 	/** All active rooms ordered by name — used to build the bulk schedule upload template/validation. */

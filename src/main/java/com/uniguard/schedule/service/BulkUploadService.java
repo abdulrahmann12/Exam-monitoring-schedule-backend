@@ -27,6 +27,8 @@ import com.uniguard.schedule.dto.bulk.BulkUploadErrorDTO;
 import com.uniguard.schedule.dto.bulk.BulkUploadResultDTO;
 import com.uniguard.schedule.entity.Person;
 import com.uniguard.schedule.entity.Room;
+import java.util.Map;
+import com.uniguard.schedule.entity.RoomCategory;
 import com.uniguard.schedule.entity.enums.Gender;
 import com.uniguard.schedule.entity.enums.HallGender;
 import com.uniguard.schedule.entity.enums.PersonRole;
@@ -86,6 +88,7 @@ public class BulkUploadService {
 	private final NormalizedNameMaintenanceService normalizedNameMaintenanceService;
 	private final EntityManager entityManager;
 	private final TransactionTemplate transactionTemplate;
+	private final RoomCategoryService roomCategoryService;
 
 
 	public BulkUploadResultDTO uploadPersons(MultipartFile file, BulkDuplicateStrategy strategy) {
@@ -140,9 +143,11 @@ public class BulkUploadService {
 				values.getString(1),
 				values.getString(2),
 				values.getString(3),
-				values.getString(4)
+				values.getString(4),
+				values.getString(5)
 			)
 		);
+		Map<String, RoomCategory> roomTypes = roomCategoryService.byNormalizedName();
 
 		LOGGER.info("Bulk rooms upload started: fileSizeBytes={}, rows={}", file.getSize(), parseResult.totalRows());
 		if (parseResult.rows().isEmpty()) {
@@ -151,7 +156,7 @@ public class BulkUploadService {
 
 		ValidationService.ValidationResult<RoomImportCommand> validation = validationService.validateRows(
 			parseResult.rows(),
-			this::validateRoomRow
+			source -> validateRoomRow(source, roomTypes)
 		);
 
 		BulkUploadResultDTO result = persistWithRetry(
@@ -189,14 +194,31 @@ public class BulkUploadService {
 	public byte[] createRoomsTemplate() {
 		return createWorkbook(
 			"Rooms",
-			List.of("Name", "Capacity (optional)", "Type (optional)", "Min Invigilators (optional)", "Hall Gender (optional)"),
+			List.of("Name", "Capacity (optional)", "Size (optional)", "Min Invigilators (optional)", "Hall Gender (optional)", "Room Type (optional)"),
 			List.of(
-				List.of("Hall A", "80", "LARGE", "4", "MIXED"),
-				List.of("Lab 2", "30", "MEDIUM", "2", "FEMALE")
+				List.of("Hall A", "80", "LARGE", "4", "MIXED", RoomCategoryService.CLASSROOM),
+				List.of("Lab 2", "30", "MEDIUM", "2", "FEMALE", RoomCategoryService.LAB)
 			),
 			sheet -> {
 				addDropdownValidation(sheet, 1, 5000, 2, 2, enumNames(RoomType.values()));
 				addDropdownValidation(sheet, 1, 5000, 4, 4, enumNames(HallGender.values()));
+				// The university's room types, from a hidden sheet (a typed list is limited to 255 characters).
+				List<String> types = roomCategoryService.names();
+				if (!types.isEmpty()) {
+					Sheet lists = sheet.getWorkbook().createSheet("Lists");
+					for (int i = 0; i < types.size(); i++) {
+						lists.createRow(i).createCell(0).setCellValue(types.get(i));
+					}
+					sheet.getWorkbook().setSheetHidden(sheet.getWorkbook().getSheetIndex(lists), true);
+					DataValidationHelper helper = sheet.getDataValidationHelper();
+					DataValidation validation = helper.createValidation(
+						helper.createFormulaListConstraint("'Lists'!$A$1:$A$" + types.size()),
+						new CellRangeAddressList(1, 5000, 5, 5));
+					validation.setSuppressDropDownArrow(true);
+					validation.setShowErrorBox(true);
+					validation.createErrorBox("Unknown room type", "Pick a room type from the list (Rooms page → Room types).");
+					sheet.addValidationData(validation);
+				}
 			}
 		);
 	}
@@ -268,7 +290,7 @@ public class BulkUploadService {
 			new PersonImportCommand(name, role.orElseThrow(), email, department, availableDays, gender, subjectCodes));
 	}
 
-	private ValidationService.RowValidationResult<RoomImportCommand> validateRoomRow(RoomImportSource source) {
+	private ValidationService.RowValidationResult<RoomImportCommand> validateRoomRow(RoomImportSource source, Map<String, RoomCategory> roomTypes) {
 		List<String> errors = new ArrayList<>();
 		String name = NameNormalizationUtil.normalizeWhitespace(source.name());
 		if (name == null || name.isBlank()) {
@@ -301,12 +323,24 @@ public class BulkUploadService {
 			}
 		}
 
+		// Room type: empty = guessed from the name ("Lab 2" → Lab, else Classroom); otherwise one of the university's types.
+		RoomCategory category = null;
+		String typeText = NameNormalizationUtil.normalizeWhitespace(source.roomType());
+		if (typeText != null && !typeText.isBlank()) {
+			category = roomTypes.get(NameNormalizationUtil.normalizeForComparison(typeText));
+			if (category == null) {
+				errors.add("Unknown room type \"" + typeText + "\". Room types: "
+					+ String.join(", ", roomTypes.values().stream().sorted(RoomCategoryService.ORDER).map(RoomCategory::getName).toList())
+					+ " (add new ones on the Rooms page → Room types).");
+			}
+		}
+
 		if (!errors.isEmpty()) {
 			return ValidationService.RowValidationResult.failure(errors);
 		}
 
 		return ValidationService.RowValidationResult.success(
-			new RoomImportCommand(name, capacity, roomType.orElse(DEFAULT_ROOM_TYPE), minInvigilators, hallGender)
+			new RoomImportCommand(name, capacity, roomType.orElse(DEFAULT_ROOM_TYPE), minInvigilators, hallGender, category)
 		);
 	}
 
@@ -478,6 +512,7 @@ public class BulkUploadService {
 		room.setMinInvigilators(command.minInvigilators());
 		room.setHallGender(command.hallGender());
 		room.setActive(true);
+		room.setCategory(command.category() != null ? command.category() : roomCategoryService.guessFor(resolvedName));
 		return room;
 	}
 
@@ -590,10 +625,10 @@ public class BulkUploadService {
 	                                   Gender gender, Set<String> subjectCodes) {
 	}
 
-	private record RoomImportSource(String name, String capacity, String type, String minInvigilators, String hallGender) {
+	private record RoomImportSource(String name, String capacity, String type, String minInvigilators, String hallGender, String roomType) {
 	}
 
-	private record RoomImportCommand(String name, int capacity, RoomType type, int minInvigilators, HallGender hallGender) {
+	private record RoomImportCommand(String name, int capacity, RoomType type, int minInvigilators, HallGender hallGender, RoomCategory category) {
 	}
 
 	private record SavePlan<TEntity>(
