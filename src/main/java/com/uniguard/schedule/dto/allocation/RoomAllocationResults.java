@@ -19,8 +19,11 @@ public final class RoomAllocationResults {
 	 * @param examsSaved      exams that got at least one room
 	 * @param examsIncomplete exams with students still without a seat (also listed in {@code warnings})
 	 * @param firstDate       first exam date (to open the Scheduler there)
+	 * @param batchId         this save, for Undo
+	 * @param plan            what was saved (the page compares it with the preview it showed)
 	 */
 	public record Saved(
+		UUID batchId,
 		int roomAssignmentsCreated,
 		List<UUID> assignmentIds,
 		int examsSaved,
@@ -28,8 +31,31 @@ public final class RoomAllocationResults {
 		int studentsUnplaced,
 		List<String> timeSlotsCreated,
 		List<String> warnings,
-		LocalDate firstDate
+		LocalDate firstDate,
+		RoomAllocationPreviewDTO plan
 	) {
+	}
+
+	/**
+	 * One saved allocation (newest first on the page).
+	 *
+	 * @param remaining exam rooms of this save that still exist (some may have been deleted by hand)
+	 */
+	public record Batch(
+		UUID id,
+		java.time.Instant createdAt,
+		String createdBy,
+		String fileName,
+		int exams,
+		int examRooms,
+		int studentsUnplaced,
+		long remaining,
+		java.time.Instant undoneAt
+	) {
+	}
+
+	/** POST /api/room-allocation/batches/{id}/undo */
+	public record Undone(UUID batchId, String fileName, int examRoomsDeleted) {
 	}
 
 	/** POST /api/room-allocation/staff */
@@ -52,7 +78,9 @@ public final class RoomAllocationResults {
 		int chiefSlotsFilled,
 		int invigilatorSlotsTotal,
 		int invigilatorSlotsFilled,
-		List<String> warnings
+		List<String> warnings,
+		/** Per time with empty seats: why staff are missing and what to do. */
+		List<String> hints
 	) {
 	}
 }

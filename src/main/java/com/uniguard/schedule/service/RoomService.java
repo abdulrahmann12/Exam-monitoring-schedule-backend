@@ -20,6 +20,7 @@ import com.uniguard.schedule.mapper.RoomMapper;
 import com.uniguard.schedule.repository.RoomAssignmentRepository;
 import com.uniguard.schedule.repository.RoomRepository;
 import com.uniguard.schedule.util.NameNormalizationUtil;
+import com.uniguard.schedule.util.RoomNames;
 
 import java.text.MessageFormat;
 import java.util.UUID;
@@ -55,6 +56,7 @@ public class RoomService {
 		Room room = roomMapper.toEntity(request);
 		room.setCategory(request.roomCategoryId() != null ? roomCategoryService.require(request.roomCategoryId()) : roomCategoryService.guessFor(request.name()));
 		room.setActive(request.active() == null || request.active());
+		room.setBuilding(request.building() != null ? request.building().trim() : RoomNames.guessBuilding(request.name()));
 		return roomMapper.toResponse(roomRepository.save(room));
 	}
 
@@ -69,6 +71,9 @@ public class RoomService {
 		}
 		if (request.active() != null) {
 			room.setActive(request.active()); // existing exams in the room are kept
+		}
+		if (request.building() != null) {
+			room.setBuilding(request.building().trim()); // "" = no building
 		}
 		return roomMapper.toResponse(roomRepository.save(room));
 	}

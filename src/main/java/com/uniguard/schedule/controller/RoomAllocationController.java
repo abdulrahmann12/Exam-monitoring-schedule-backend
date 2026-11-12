@@ -26,9 +26,12 @@ import com.uniguard.schedule.service.RoomAllocationService;
 public class RoomAllocationController {
 
 	private final RoomAllocationService roomAllocationService;
+	private final com.uniguard.schedule.service.RoomAllocationExportService exportService;
 
-	public RoomAllocationController(RoomAllocationService roomAllocationService) {
+	public RoomAllocationController(RoomAllocationService roomAllocationService,
+	                                com.uniguard.schedule.service.RoomAllocationExportService exportService) {
 		this.roomAllocationService = roomAllocationService;
+		this.exportService = exportService;
 	}
 
 	/** Excel template; the Time Slot column is a dropdown of this university's time slots. */
@@ -47,9 +50,42 @@ public class RoomAllocationController {
 	public RoomAllocationResults.Saved save(
 		@RequestParam("scheduleGroupId") UUID scheduleGroupId,
 		@RequestParam("file") MultipartFile file,
-		@RequestParam(value = "dateOrder", required = false) String dateOrder
+		@RequestParam(value = "dateOrder", required = false) String dateOrder,
+		@RequestParam(value = "adjustments", required = false) String adjustments
 	) {
-		return roomAllocationService.save(scheduleGroupId, file, dateOrder);
+		return roomAllocationService.save(scheduleGroupId, file, dateOrder, adjustments);
+	}
+
+	/** Saved allocations of an exam period, newest first. */
+	@GetMapping("/batches")
+	public java.util.List<RoomAllocationResults.Batch> batches(@RequestParam("scheduleGroupId") UUID scheduleGroupId) {
+		return roomAllocationService.batches(scheduleGroupId);
+	}
+
+	/** Undo one saved allocation: deletes its exam rooms and their staff. */
+	@PostMapping("/batches/{id}/undo")
+	public RoomAllocationResults.Undone undo(@org.springframework.web.bind.annotation.PathVariable UUID id) {
+		return roomAllocationService.undo(id);
+	}
+
+	/** Door sheets (PDF): one page per room and time of a saved allocation. */
+	@GetMapping("/batches/{id}/door-sheets")
+	public ResponseEntity<ByteArrayResource> doorSheets(@org.springframework.web.bind.annotation.PathVariable UUID id) {
+		return download(exportService.doorSheets(id), MediaType.APPLICATION_PDF);
+	}
+
+	/** Excel file of a saved allocation (rooms, subjects, students, staff). */
+	@GetMapping("/batches/{id}/export")
+	public ResponseEntity<ByteArrayResource> export(@org.springframework.web.bind.annotation.PathVariable UUID id) {
+		return download(exportService.excel(id), MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
+	}
+
+	private static ResponseEntity<ByteArrayResource> download(com.uniguard.schedule.service.RoomAllocationExportService.Download file, MediaType type) {
+		HttpHeaders headers = new HttpHeaders();
+		headers.setContentType(type);
+		headers.setContentLength(file.bytes().length);
+		headers.setContentDisposition(ContentDisposition.attachment().filename(file.fileName()).build());
+		return ResponseEntity.ok().headers(headers).body(new ByteArrayResource(file.bytes()));
 	}
 
 	/** "Create schedule": assigns chiefs and invigilators to the saved exam rooms. */
@@ -63,8 +99,9 @@ public class RoomAllocationController {
 	public RoomAllocationPreviewDTO preview(
 		@RequestParam("scheduleGroupId") UUID scheduleGroupId,
 		@RequestParam("file") MultipartFile file,
-		@RequestParam(value = "dateOrder", required = false) String dateOrder
+		@RequestParam(value = "dateOrder", required = false) String dateOrder,
+		@RequestParam(value = "adjustments", required = false) String adjustments
 	) {
-		return roomAllocationService.preview(scheduleGroupId, file, dateOrder);
+		return roomAllocationService.preview(scheduleGroupId, file, dateOrder, adjustments);
 	}
 }

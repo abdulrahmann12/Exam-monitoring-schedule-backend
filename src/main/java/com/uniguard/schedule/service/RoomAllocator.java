@@ -40,11 +40,19 @@ public final class RoomAllocator {
 		}
 	}
 
-	/** One free room. {@code id} is opaque to the allocator. */
-	public record RoomOption<I>(I id, String name, int capacity) {
+	/**
+	 * One free room. {@code id} is opaque to the allocator. {@code group} is its building ("" or null = not known):
+	 * an exam that needs several rooms stays in one building when one building can seat it.
+	 */
+	public record RoomOption<I>(I id, String name, int capacity, String group) {
 		public RoomOption {
 			Objects.requireNonNull(id, "id");
 			Objects.requireNonNull(name, "name");
+			group = group == null ? "" : group;
+		}
+
+		public RoomOption(I id, String name, int capacity) {
+			this(id, name, capacity, "");
 		}
 	}
 
@@ -75,13 +83,18 @@ public final class RoomAllocator {
 		exams.forEach(exam -> placements.add(null));
 
 		List<Exam> tooBig = new ArrayList<>();
+		int remaining = order.stream().mapToInt(Exam::students).sum(); // students of this exam and all after it
 		for (Exam exam : order) {
 			int freeSeats = free.stream().mapToInt(RoomOption::capacity).sum();
 			if (exam.students() > freeSeats) {
 				tooBig.add(exam); // seat the others first, then give this one what is left
+				remaining -= exam.students();
 				continue;
 			}
-			List<RoomOption<I>> chosen = bestSubset(free, exam.students());
+			// Seats nobody else needs: keeping an exam in one building may only waste these.
+			int spare = freeSeats - remaining;
+			remaining -= exam.students();
+			List<RoomOption<I>> chosen = chooseRooms(free, exam.students(), spare);
 			free.removeAll(chosen);
 			placements.set(exams.indexOf(exam), place(exam, chosen));
 		}
@@ -91,6 +104,49 @@ public final class RoomAllocator {
 			placements.set(exams.indexOf(exam), place(exam, chosen));
 		}
 		return placements;
+	}
+
+	/**
+	 * Rooms for one exam: inside one building when a building can seat it (fewest rooms, then fewest empty
+	 * seats, across buildings), otherwise across buildings. Without building information this is
+	 * {@link #bestSubset} on all rooms.
+	 */
+	static <I> List<RoomOption<I>> chooseRooms(List<RoomOption<I>> free, int students) {
+		return chooseRooms(free, students, Integer.MAX_VALUE);
+	}
+
+	/**
+	 * @param spare seats no other exam of this sitting needs. One building is only preferred when the extra empty
+	 *              seats it costs (compared with the best rooms across buildings) fit in these, and it needs at most
+	 *              one room more: keeping an exam together must never leave other students without a seat.
+	 */
+	static <I> List<RoomOption<I>> chooseRooms(List<RoomOption<I>> free, int students, int spare) {
+		List<RoomOption<I>> global = bestSubset(free, students);
+		java.util.Map<String, List<RoomOption<I>>> byGroup = new java.util.TreeMap<>();
+		for (RoomOption<I> room : free) {
+			byGroup.computeIfAbsent(room.group(), key -> new ArrayList<>()).add(room);
+		}
+		if (byGroup.size() <= 1 || global.stream().map(RoomOption::group).distinct().count() <= 1) {
+			return global; // no buildings known, or the best rooms are already in one building
+		}
+		int globalSeats = global.stream().mapToInt(RoomOption::capacity).sum();
+		List<RoomOption<I>> best = null;
+		int bestSeats = 0;
+		for (List<RoomOption<I>> pool : byGroup.values()) {
+			if (pool.stream().mapToInt(RoomOption::capacity).sum() < students) {
+				continue;
+			}
+			List<RoomOption<I>> subset = bestSubset(pool, students);
+			int seats = subset.stream().mapToInt(RoomOption::capacity).sum();
+			if (seats - globalSeats > spare || subset.size() > global.size() + 1) {
+				continue;
+			}
+			if (best == null || subset.size() < best.size() || (subset.size() == best.size() && seats < bestSeats)) {
+				best = subset;
+				bestSeats = seats;
+			}
+		}
+		return best != null ? best : global;
 	}
 
 	/**

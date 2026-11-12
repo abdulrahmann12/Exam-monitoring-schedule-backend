@@ -683,6 +683,415 @@ class RoomAllocationTest {
 	}
 
 	@Test
+	void aSavedAllocationCanBeUndoneOnce() throws Exception {
+		staff(3, 8);
+		String csv = "Date,Time Slot,Code,Students\n2027-11-01,09:00 - 12:00,UNDO1,150\n2027-11-01,09:00 - 12:00,UNDO2,35\n";
+		var save = MockMvcRequestBuilders.multipart("/api/room-allocation/save")
+			.file(new MockMultipartFile("file", "finals-nov.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.param("scheduleGroupId", groupId);
+		JsonNode saved = ok(mockMvc.perform(save.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+		String batchId = saved.get("batchId").asText();
+		assertThat(saved.get("plan").get("sittings").get(0).get("exams")).hasSize(2); // what was saved, for the page to compare
+		List<String> ids = new ArrayList<>();
+		saved.get("assignmentIds").forEach(id -> ids.add(id.asText()));
+		json(post("/api/room-allocation/staff"), Map.of("scheduleGroupId", groupId, "assignmentIds", ids));
+
+		// An exam room made by hand in the same period is not part of the save and must survive the undo.
+		String other = "Date,Time Slot,Room,Subject Code,Students\n2027-11-02,09:00 - 12:00,Room 60,HAND1,20\n";
+		ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/schedule-groups/" + groupId + "/bulk-upload")
+			.file(new MockMultipartFile("file", "hand.csv", "text/csv", other.getBytes(StandardCharsets.UTF_8)))
+			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+
+		JsonNode batches = readJson(MockMvcRequestBuilders.get("/api/room-allocation/batches").param("scheduleGroupId", groupId));
+		assertThat(batches).hasSize(1);
+		assertThat(batches.get(0).get("fileName").asText()).isEqualTo("finals-nov.csv");
+		assertThat(batches.get(0).get("remaining").asInt()).isEqualTo(3);
+		assertThat(batches.get(0).get("createdBy").asText()).contains("@alloc.test");
+
+		assertThat(send(post("/api/room-allocation/batches/" + batchId + "/undo"), null, viewer)).isEqualTo(403);
+		JsonNode undone = objectMapper.readTree(json(post("/api/room-allocation/batches/" + batchId + "/undo"), Map.of())
+			.andReturn().getResponse().getContentAsString());
+		assertThat(undone.get("examRoomsDeleted").asInt()).isEqualTo(3);
+
+		TenantContext.runAs(university, () -> {
+			List<RoomAssignment> left = assignments.findAllDetailedByScheduleGroupId(UUID.fromString(groupId));
+			assertThat(left).extracting(RoomAssignment::getSubjectCode).containsExactly("HAND1");
+		});
+		JsonNode after = readJson(MockMvcRequestBuilders.get("/api/room-allocation/batches").param("scheduleGroupId", groupId));
+		assertThat(after.get(0).get("undoneAt").isNull()).isFalse();
+		assertThat(after.get(0).get("remaining").asInt()).isZero();
+		assertThat(send(post("/api/room-allocation/batches/" + batchId + "/undo"), null, admin)).isEqualTo(409); // only once
+		assertThat(send(post("/api/room-allocation/batches/" + UUID.randomUUID() + "/undo"), null, admin)).isEqualTo(404);
+
+		// The rooms are free again: the same file can be saved again.
+		JsonNode again = ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/room-allocation/save")
+			.file(new MockMultipartFile("file", "finals-nov.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.param("scheduleGroupId", groupId)
+			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+		assertThat(again.get("roomAssignmentsCreated").asInt()).isEqualTo(3);
+	}
+
+	// ── How to fix (hints) ──
+
+	@Test
+	void problemsComeWithConcreteHints() throws Exception {
+		twoSlots();
+		staff(4, 12);
+		String csv = """
+			Date,Time Slot,Code,Students,Room Type
+			2027-12-01,09:00 - 11:00,AAA,150,
+			2027-12-01,09:00 - 11:00,BBB,60,
+			2027-12-01,09:00 - 11:00,CCC,80,
+			2027-12-01,09:00 - 11:00,ART,20,Drawing Studio
+			""";
+		JsonNode result = ok(preview(csv));
+		// BBB gets no room at 09:00 (AAA and CCC take all 250 normal seats).
+		JsonNode bbb = exam(result, "BBB");
+		assertThat(bbb.get("unplaced").asInt()).isEqualTo(60);
+		String hints = bbb.get("hints").toString();
+		assertThat(hints).contains("Move it to another time on 1 Dec: 12:00–14:00 (4 free rooms, 250 seats)");
+		assertThat(hints).contains("Or move CCC (80 students, row 4) to 12:00–14:00");
+		assertThat(hints).contains("Out of service now: Closed 500 (500)");
+
+		JsonNode art = exam(result, "ART");
+		assertThat(art.get("hints").toString()).contains("No room has the type “Drawing Studio”")
+			.doesNotContain("M209") // a lab is no example for a drawing studio
+			.doesNotContain("No time on"); // another date cannot help when the type has no rooms
+		JsonNode pc = ok(preview("Date,Time Slot,Code,Students,Room Type\n2027-12-02,09:00 - 11:00,PC1,20,Computer Lab\n"));
+		assertThat(exam(pc, "PC1").get("hints").toString()).contains("No room has the type “Computer Lab”").contains("M209 (Lab) (300)");
+
+		assertThat(exam(result, "AAA").get("hints")).isEmpty(); // no problem, no hint
+	}
+
+	@Test
+	void genderAndStaffProblemsComeWithHints() throws Exception {
+		hall("Men Hall", 70, "MALE");
+		JsonNode result = ok(preview("Date,Time Slot,Code,Students,Gender\n2027-12-05,09:00 - 12:00,MEN1,100,Male\n"));
+		assertThat(exam(result, "MEN1").get("hints").toString()).contains("Only 70 seats are in Male halls for 100 students");
+
+		// Staff who don't work on Sundays: Create schedule says so for the empty seats.
+		json(post("/api/people"), Map.of("name", "Monday Chief", "department", "Exams", "role", "CHIEF_INVIGILATOR", "availableDays", List.of("MON")));
+		json(post("/api/people"), Map.of("name", "Monday Invigilator", "department", "Exams", "role", "INVIGILATOR", "availableDays", List.of("MON")));
+		String csv = "Date,Time Slot,Code,Students\n2027-12-05,09:00 - 12:00,SUN1,40\n"; // 5 Dec 2027 is a Sunday
+		JsonNode saved = ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/room-allocation/save")
+			.file(new MockMultipartFile("file", "sunday.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.param("scheduleGroupId", groupId)
+			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+		List<String> ids = new ArrayList<>();
+		saved.get("assignmentIds").forEach(id -> ids.add(id.asText()));
+		JsonNode staffed = objectMapper.readTree(json(post("/api/room-allocation/staff"), Map.of("scheduleGroupId", groupId, "assignmentIds", ids))
+			.andReturn().getResponse().getContentAsString());
+		assertThat(staffed.get("hints")).hasSize(1);
+		assertThat(staffed.get("hints").get(0).asText()).startsWith("5 Dec 09:00").contains("1 don't work on Sunday").contains("People page");
+	}
+
+	// ── Buildings ──
+
+	@Test
+	void buildingsAreGuessedEditableAndKeepSplitExamsTogether() throws Exception {
+		JsonNode a101 = objectMapper.readTree(json(post("/api/rooms"), Map.of("name", "A101", "capacity", 70, "type", "LARGE", "minInvigilators", 1))
+			.andReturn().getResponse().getContentAsString());
+		assertThat(a101.get("building").asText()).isEqualTo("A"); // from the name
+		json(post("/api/rooms"), Map.of("name", "A102", "capacity", 70, "type", "LARGE", "minInvigilators", 1));
+		json(post("/api/rooms"), Map.of("name", "Annex Room", "capacity", 50, "type", "LARGE", "minInvigilators", 1, "building", "B"));
+		JsonNode none = objectMapper.readTree(json(MockMvcRequestBuilders.put("/api/rooms/" + a101.get("id").asText()),
+			Map.of("name", "A101", "capacity", 70, "type", "LARGE", "minInvigilators", 1, "building", "")).andReturn().getResponse().getContentAsString());
+		assertThat(none.get("building").isNull()).isTrue(); // "no building" chosen
+		json(MockMvcRequestBuilders.put("/api/rooms/" + a101.get("id").asText()),
+			Map.of("name", "A101", "capacity", 70, "type", "LARGE", "minInvigilators", 1, "building", "A"));
+
+		// The 250-student exam takes the four rooms without a building; the 120-student exam then stays in building A
+		// (70 + 70) instead of 70 + 50 across buildings.
+		String csv = "Date,Time Slot,Code,Students\n2028-01-03,09:00 - 12:00,ALL250,250\n2028-01-03,09:00 - 12:00,SPLIT120,120\n";
+		JsonNode result = ok(preview(csv));
+		assertThat(roomNames(exam(result, "SPLIT120"))).containsExactly("A101", "A102");
+	}
+
+	@Test
+	void aChiefCoversSeveralRoomsOnlyInOneBuilding() throws Exception {
+		for (String name : List.of("A101", "A102", "B201")) {
+			json(post("/api/rooms"), Map.of("name", name, "capacity", 30, "type", "SMALL", "minInvigilators", 1));
+		}
+		List<String> allDays = List.of("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT");
+		for (String name : List.of("Chief One", "Chief Two")) {
+			json(post("/api/people"), Map.of("name", name, "department", "Exams", "role", "CHIEF_INVIGILATOR", "availableDays", allDays));
+		}
+		for (int i = 1; i <= 3; i++) {
+			json(post("/api/people"), Map.of("name", "Inv " + i, "department", "Exams", "role", "INVIGILATOR", "availableDays", allDays));
+		}
+		// Each chief may cover 2 rooms at once (default). Three rooms, two chiefs: A101 + A102 share one chief, B201 gets the other.
+		String timetable = "Date,Time Slot,Room,Subject Code,Students\n"
+			+ "2028-01-04,09:00 - 12:00,A101,X1,20\n2028-01-04,09:00 - 12:00,A102,X2,20\n2028-01-04,09:00 - 12:00,B201,X3,20\n";
+		ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/schedule-groups/" + groupId + "/bulk-upload")
+			.file(new MockMultipartFile("file", "t.csv", "text/csv", timetable.getBytes(StandardCharsets.UTF_8)))
+			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+		TenantContext.runAs(university, () -> {
+			Map<String, String> chiefOf = new java.util.HashMap<>();
+			assignments.findAllDetailedByScheduleGroupId(UUID.fromString(groupId))
+				.forEach(row -> chiefOf.put(row.getRoom().getName(), row.getChiefInvigilator() == null ? null : row.getChiefInvigilator().getName()));
+			assertThat(chiefOf.values()).doesNotContainNull();
+			assertThat(chiefOf.get("A101")).isEqualTo(chiefOf.get("A102"));
+			assertThat(chiefOf.get("B201")).isNotEqualTo(chiefOf.get("A101"));
+		});
+	}
+
+	@Test
+	void roomImportReadsTheBuildingColumn() throws Exception {
+		try (var workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook()) {
+			var sheet = workbook.createSheet("Rooms");
+			String[][] rows = {
+				{"Name", "Capacity", "Size", "Min Invigilators", "Hall Gender", "Room Type", "Building"},
+				{"Lecture Theatre", "120", "LARGE", "2", "MIXED", "", "Main"},
+				{"C305", "40", "MEDIUM", "1", "MIXED", "", ""},
+			};
+			for (int r = 0; r < rows.length; r++) {
+				var row = sheet.createRow(r);
+				for (int c = 0; c < rows[r].length; c++) {
+					row.createCell(c).setCellValue(rows[r][c]);
+				}
+			}
+			var out = new java.io.ByteArrayOutputStream();
+			workbook.write(out);
+			ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/bulk/rooms/upload")
+				.file(new MockMultipartFile("file", "rooms.xlsx", "application/octet-stream", out.toByteArray()))
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+		}
+		Map<String, String> buildingOf = new java.util.HashMap<>();
+		readJson(MockMvcRequestBuilders.get("/api/rooms").param("size", "100")).get("content")
+			.forEach(room -> buildingOf.put(room.get("name").asText(), room.get("building").isNull() ? null : room.get("building").asText()));
+		assertThat(buildingOf).containsEntry("Lecture Theatre", "Main").containsEntry("C305", "C");
+	}
+
+	// ── Changes made on the page before saving ──
+
+	private String roomId(String name) throws Exception {
+		for (JsonNode room : readJson(MockMvcRequestBuilders.get("/api/rooms").param("size", "100")).get("content")) {
+			if (room.get("name").asText().equals(name)) {
+				return room.get("id").asText();
+			}
+		}
+		throw new IllegalStateException("no room " + name);
+	}
+
+	private ResultActions preview(String csv, String adjustments, String endpoint) throws Exception {
+		var request = MockMvcRequestBuilders.multipart("/api/room-allocation/" + endpoint)
+			.file(new MockMultipartFile("file", "exams.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.param("scheduleGroupId", groupId)
+			.param("adjustments", adjustments);
+		return mockMvc.perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest"));
+	}
+
+	@Test
+	void theUserCanMoveAnExamAndChooseItsRooms() throws Exception {
+		twoSlots();
+		String csv = """
+			Date,Time Slot,Code,Students
+			2028-02-01,09:00 - 11:00,MOVE,100
+			2028-02-01,09:00 - 11:00,PIN,90
+			2028-02-01,09:00 - 11:00,OTHER,100
+			""";
+		// Row 2 to noon; row 3 exactly in Room 50 + Room 40 (the system would have chosen Hall 100).
+		String changes = "{\"times\":{\"2\":\"12:00-14:00\"},\"rooms\":{\"3\":[\"" + roomId("Room 50") + "\",\"" + roomId("Room 40") + "\"]}}";
+		JsonNode result = ok(preview(csv, changes, "preview"));
+		JsonNode moved = exam(result, "MOVE");
+		assertThat(moved.get("time").asText()).isEqualTo("12:00–14:00");
+		assertThat(moved.get("edited").asBoolean()).isTrue();
+		JsonNode pinned = exam(result, "PIN");
+		assertThat(roomNames(pinned)).containsExactly("Room 50", "Room 40");
+		assertThat(pinned.get("edited").asBoolean()).isTrue();
+		assertThat(roomNames(exam(result, "OTHER"))).containsExactly("Hall 100"); // seated around the chosen rooms
+		assertThat(exam(result, "OTHER").get("edited").asBoolean()).isFalse();
+
+		// Save keeps the changes.
+		ok(preview(csv, changes, "save"));
+		TenantContext.runAs(university, () -> {
+			Map<String, List<String>> roomsOf = new java.util.HashMap<>();
+			Map<String, String> timeOf = new java.util.HashMap<>();
+			for (RoomAssignment row : assignments.findAllDetailedByScheduleGroupId(UUID.fromString(groupId))) {
+				roomsOf.computeIfAbsent(row.getSubjectCode(), k -> new ArrayList<>()).add(row.getRoom().getName());
+				timeOf.put(row.getSubjectCode(), row.getTimeSlot().getStartTime().toString());
+			}
+			assertThat(roomsOf.get("PIN")).containsExactlyInAnyOrder("Room 50", "Room 40");
+			assertThat(timeOf).containsEntry("MOVE", "12:00").containsEntry("PIN", "09:00");
+		});
+	}
+
+	@Test
+	void droppingAnExamOnAnotherDayOrOnASmallRoomWorks() throws Exception {
+		twoSlots();
+		String csv = "Date,Time Slot,Code,Students\n2028-04-01,09:00 - 11:00,DAYMOVE,30\n2028-04-01,09:00 - 11:00,DROP,100\n";
+		// Row 2 to another day; row 3 dropped on Room 40 at noon: 40 seats there, the rest in more rooms.
+		String changes = "{\"dates\":{\"2\":\"2028-04-03\"},\"times\":{\"3\":\"12:00-14:00\"},\"anchors\":{\"3\":\"" + roomId("Room 40") + "\"}}";
+		JsonNode result = ok(preview(csv, changes, "preview"));
+		Map<String, String> dayOf = new java.util.HashMap<>();
+		for (JsonNode sitting : result.get("sittings")) {
+			for (JsonNode exam : sitting.get("exams")) {
+				dayOf.put(exam.get("subjectCode").asText(), sitting.get("date").asText() + " " + sitting.get("time").asText());
+			}
+		}
+		assertThat(dayOf).containsEntry("DAYMOVE", "2028-04-03 09:00–11:00").containsEntry("DROP", "2028-04-01 12:00–14:00");
+		JsonNode drop = exam(result, "DROP");
+		assertThat(roomNames(drop).get(0)).isEqualTo("Room 40"); // the room it was dropped on comes first
+		assertThat(drop.get("unplaced").asInt()).isZero();       // more rooms were added for the other 60
+		assertThat(drop.get("edited").asBoolean()).isTrue();
+		assertThat(exam(result, "DAYMOVE").get("edited").asBoolean()).isTrue();
+	}
+
+	@Test
+	void theRoomViewIsToldWhichRoomsAreAlreadyBooked() throws Exception {
+		String booked = "Date,Time Slot,Room,Subject Code,Students\n2028-04-05,09:00 - 12:00,Hall 100,OLD1,80\n";
+		ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/schedule-groups/" + groupId + "/bulk-upload")
+			.file(new MockMultipartFile("file", "old.csv", "text/csv", booked.getBytes(StandardCharsets.UTF_8)))
+			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+		JsonNode result = ok(preview("Date,Time Slot,Code,Students\n2028-04-05,13:00 - 15:00,NEW1,20\n"));
+		assertThat(result.get("booked")).hasSize(1);
+		JsonNode entry = result.get("booked").get(0);
+		assertThat(entry.get("date").asText()).isEqualTo("2028-04-05");
+		assertThat(entry.get("time").asText()).isEqualTo("09:00–12:00");
+		assertThat(entry.get("roomId").asText()).isEqualTo(roomId("Hall 100"));
+		assertThat(entry.get("label").asText()).isEqualTo("Booked: OLD1");
+	}
+
+	@Test
+	void chosenRoomsThatAreTakenOrUnknownRowsAreReported() throws Exception {
+		twoSlots();
+		String csv = "Date,Time Slot,Code,Students\n2028-02-02,09:00 - 11:00,A1,40\n2028-02-02,09:00 - 11:00,A2,40\n";
+		String room40 = roomId("Room 40");
+		// Both rows want Room 40: the first gets it, the second is told and seated nowhere else (its choice is respected).
+		String clash = "{\"rooms\":{\"2\":[\"" + room40 + "\"],\"3\":[\"" + room40 + "\"]}}";
+		JsonNode result = ok(preview(csv, clash, "preview"));
+		assertThat(roomNames(exam(result, "A1"))).containsExactly("Room 40");
+		assertThat(exam(result, "A2").get("unplaced").asInt()).isEqualTo(40);
+		assertThat(result.get("warnings").toString()).contains("room Room 40 is not free");
+
+		assertThat(preview(csv, "{\"times\":{\"9\":\"12:00-14:00\"}}", "preview").andExpect(status().isBadRequest())
+			.andReturn().getResponse().getContentAsString()).contains("this file has no exam in that row");
+		assertThat(preview(csv, "{not json", "preview").andExpect(status().isBadRequest())
+			.andReturn().getResponse().getContentAsString()).contains("could not be read");
+		assertThat(preview("Date,Time Slot,Code,Students\n2028-02-02,,A3,40\n", "{\"rooms\":{\"2\":[\"" + room40 + "\"]}}", "preview")
+			.andExpect(status().isBadRequest()).andReturn().getResponse().getContentAsString()).contains("Choose a time for this exam");
+	}
+
+	@Test
+	void chosenRoomsOfTheWrongTypeOrGenderAreLeftOut() throws Exception {
+		twoSlots();
+		hall("Women Hall", 50, "FEMALE");
+		room("Physics Lab 7", 40, true); // its name makes it a lab: only for exams that ask for a lab
+		String csv = "Date,Time Slot,Code,Students,Gender\n2028-02-03,09:00 - 11:00,MEN1,30,Male\n2028-02-03,09:00 - 11:00,ANY1,30,\n";
+		// The page should never send these, but the server must not trust it.
+		String changes = "{\"anchors\":{\"2\":\"" + roomId("Women Hall") + "\",\"3\":\"" + roomId("Physics Lab 7") + "\"},"
+			+ "\"times\":{\"2\":\"09:00-11:00\",\"3\":\"09:00-11:00\"}}";
+		JsonNode result = ok(preview(csv, changes, "preview"));
+		assertThat(roomNames(exam(result, "MEN1"))).doesNotContain("Women Hall");
+		assertThat(roomNames(exam(result, "ANY1"))).doesNotContain("Physics Lab 7");
+		assertThat(result.get("warnings").toString())
+			.contains("room Women Hall is a Female hall and this exam is Male, so it was left out")
+			.contains("room Physics Lab 7 is a “");
+	}
+
+	@Test
+	void theSchedulerIsToldWhoIsBusyInOtherExamPeriods() throws Exception {
+		List<String> allDays = List.of("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT");
+		String busy = objectMapper.readTree(json(post("/api/people"), Map.of("name", "Busy Elsewhere", "department", "Exams", "role", "INVIGILATOR",
+			"availableDays", allDays)).andReturn().getResponse().getContentAsString()).get("id").asText();
+		String free = objectMapper.readTree(json(post("/api/people"), Map.of("name", "Really Free", "department", "Exams", "role", "INVIGILATOR",
+			"availableDays", allDays)).andReturn().getResponse().getContentAsString()).get("id").asText();
+		String noon = objectMapper.readTree(json(post("/api/slots"), Map.of("label", "Noon", "startTime", "12:00", "endTime", "13:00", "sortOrder", 1))
+			.andReturn().getResponse().getContentAsString()).get("id").asText();
+		String lateMorning = objectMapper.readTree(json(post("/api/slots"), Map.of("label", "Late morning", "startTime", "11:30", "endTime", "12:30", "sortOrder", 2))
+			.andReturn().getResponse().getContentAsString()).get("id").asText();
+		String otherGroup = objectMapper.readTree(json(post("/api/schedule-groups"), Map.of("name", "Resits")).andReturn().getResponse().getContentAsString())
+			.get("id").asText();
+		// In the other exam period, "Busy Elsewhere" invigilates 12:00–13:00 on 2028-05-07.
+		json(post("/api/assignments"), Map.of("scheduleGroupId", otherGroup, "examDate", "2028-05-07", "roomId", roomId("Hall 100"), "timeSlotId", noon,
+			"subjectCode", "HUM101", "locked", false, "invigilatorIds", List.of(busy))).andExpect(status().isCreated());
+
+		// This exam period, 11:30–12:30 the same day: overlaps → busy; the next day → nothing.
+		JsonNode result = readJson(MockMvcRequestBuilders.get("/api/assignments/busy-elsewhere").param("scheduleGroupId", groupId).param("date", "2028-05-07")
+			.param("slotId", lateMorning));
+		assertThat(result.get("people")).hasSize(1);
+		JsonNode person = result.get("people").get(0);
+		assertThat(person.get("personId").asText()).isEqualTo(busy).isNotEqualTo(free);
+		assertThat(person.get("invigilator").asBoolean()).isTrue();
+		assertThat(person.get("reason").asText()).isEqualTo("Busy in Resits at 12:00–13:00");
+		assertThat(readJson(MockMvcRequestBuilders.get("/api/assignments/busy-elsewhere").param("scheduleGroupId", groupId).param("date", "2028-05-08")
+			.param("slotId", lateMorning)).get("people")).isEmpty();
+		// Its own exam period does not count as "elsewhere" (the page already knows it).
+		assertThat(readJson(MockMvcRequestBuilders.get("/api/assignments/busy-elsewhere").param("scheduleGroupId", otherGroup).param("date", "2028-05-07")
+			.param("slotId", lateMorning)).get("people")).isEmpty();
+	}
+
+	@Test
+	void anExamPeriodWithSavedAllocationsCanBeDeleted() throws Exception {
+		String csv = "Date,Time Slot,Code,Students\n2028-06-01,09:00 - 11:00,GONE1,50\n";
+		var save = MockMvcRequestBuilders.multipart("/api/room-allocation/save")
+			.file(new MockMultipartFile("file", "gone.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.param("scheduleGroupId", groupId);
+		ok(mockMvc.perform(save.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+		assertThat(readJson(MockMvcRequestBuilders.get("/api/room-allocation/batches").param("scheduleGroupId", groupId))).hasSize(1);
+
+		mockMvc.perform(MockMvcRequestBuilders.delete("/api/schedule-groups/" + groupId)
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest"))
+			.andExpect(status().is2xxSuccessful());
+		mockMvc.perform(MockMvcRequestBuilders.get("/api/schedule-groups/" + groupId).header(HttpHeaders.AUTHORIZATION, "Bearer " + admin))
+			.andExpect(status().isNotFound());
+	}
+
+	// ── Door sheets and Excel export ──
+
+	@Test
+	void doorSheetsAndExcelOfASavedAllocation() throws Exception {
+		staff(3, 8);
+		String csv = "Date,Time Slot,Subject Name,Code,Students\n2028-03-01,09:00 - 12:00,Calculus,MATH101,150\n"
+			+ "2028-03-01,09:00 - 12:00,=HYPERLINK(\"x\"),EVIL1,35\n";
+		var save = MockMvcRequestBuilders.multipart("/api/room-allocation/save")
+			.file(new MockMultipartFile("file", "march.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.param("scheduleGroupId", groupId);
+		JsonNode saved = ok(mockMvc.perform(save.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
+		String batchId = saved.get("batchId").asText();
+		List<String> ids = new ArrayList<>();
+		saved.get("assignmentIds").forEach(id -> ids.add(id.asText()));
+		json(post("/api/room-allocation/staff"), Map.of("scheduleGroupId", groupId, "assignmentIds", ids));
+
+		// Door sheets: one page per exam room (Hall 100 + Room 50 for MATH101, Room 40 for EVIL1).
+		var pdfResponse = mockMvc.perform(MockMvcRequestBuilders.get("/api/room-allocation/batches/" + batchId + "/door-sheets")
+			.header(HttpHeaders.AUTHORIZATION, "Bearer " + viewer)).andExpect(status().isOk()).andReturn().getResponse();
+		assertThat(pdfResponse.getContentType()).isEqualTo("application/pdf");
+		assertThat(pdfResponse.getHeader(HttpHeaders.CONTENT_DISPOSITION)).contains("door-sheets-finals.pdf");
+		var reader = new com.lowagie.text.pdf.PdfReader(pdfResponse.getContentAsByteArray());
+		assertThat(reader.getNumberOfPages()).isEqualTo(3);
+		var text = new com.lowagie.text.pdf.parser.PdfTextExtractor(reader);
+		String first = text.getTextFromPage(1);
+		assertThat(first).contains("Hall 100").contains("Wednesday 1 March 2028").contains("09:00 – 12:00")
+			.contains("Calculus (MATH101)").contains("100 of 100 seats").contains("Auto Chief");
+		reader.close();
+
+		// Excel: one row per exam room, staff names, and no formula from a subject name.
+		byte[] xlsx = mockMvc.perform(MockMvcRequestBuilders.get("/api/room-allocation/batches/" + batchId + "/export")
+			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin)).andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+		try (var workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook(new java.io.ByteArrayInputStream(xlsx))) {
+			var sheet = workbook.getSheetAt(0);
+			assertThat(sheet.getLastRowNum()).isEqualTo(3);
+			assertThat(sheet.getRow(0).getCell(10).getStringCellValue()).isEqualTo("Chief");
+			assertThat(sheet.getRow(1).getCell(3).getStringCellValue()).isEqualTo("Hall 100");
+			assertThat(sheet.getRow(1).getCell(10).getStringCellValue()).startsWith("Auto Chief");
+			assertThat(sheet.getRow(1).getCell(11).getStringCellValue()).contains("Auto Invigilator");
+			for (int r = 1; r <= 3; r++) {
+				var cell = sheet.getRow(r).getCell(6);
+				assertThat(cell.getCellType()).isEqualTo(org.apache.poi.ss.usermodel.CellType.STRING);
+				if (cell.getStringCellValue().contains("HYPERLINK")) {
+					assertThat(cell.getStringCellValue()).startsWith("'=");
+				}
+			}
+		}
+
+		// Undone: nothing to print.
+		json(post("/api/room-allocation/batches/" + batchId + "/undo"), Map.of());
+		assertThat(mockMvc.perform(MockMvcRequestBuilders.get("/api/room-allocation/batches/" + batchId + "/door-sheets")
+			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin)).andReturn().getResponse().getStatus()).isEqualTo(409);
+	}
+
+	@Test
 	void viewersCannotSaveRooms() throws Exception {
 		var request = MockMvcRequestBuilders.multipart("/api/room-allocation/save")
 			.file(new MockMultipartFile("file", "x.csv", "text/csv", "Date,Time Slot,Code,Students\n2027-01-10,09:00 - 12:00,X1,5\n".getBytes(StandardCharsets.UTF_8)))

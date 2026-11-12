@@ -36,6 +36,7 @@ import com.uniguard.schedule.exception.NotFoundException;
 import com.uniguard.schedule.dto.bulk.BulkUploadErrorDTO;
 import com.uniguard.schedule.entity.Person;
 import com.uniguard.schedule.entity.Room;
+import com.uniguard.schedule.entity.RoomAllocationBatch;
 import com.uniguard.schedule.entity.enums.PersonRole;
 import com.uniguard.schedule.entity.RoomCategory;
 import com.uniguard.schedule.entity.RoomAssignment;
@@ -46,6 +47,7 @@ import com.uniguard.schedule.exception.ValidationException;
 import com.uniguard.schedule.repository.RoomRepository;
 import com.uniguard.schedule.repository.TimeSlotRepository;
 import com.uniguard.schedule.util.NameNormalizationUtil;
+import com.uniguard.schedule.util.RoomNames;
 import com.uniguard.schedule.util.TabularFile;
 
 /**
@@ -80,15 +82,18 @@ public class RoomAllocationService {
 	private final ScheduleWriteLock scheduleWriteLock;
 	private final DemoModeService demoModeService;
 	private final AutoAssignmentService autoAssignmentService;
+	private final com.uniguard.schedule.repository.RoomAllocationBatchRepository batchRepository;
+	private final StaffConcurrencyRules staffConcurrencyRules;
+	private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 	private final com.uniguard.schedule.repository.PersonRepository personRepository;
 
 	/**
 	 * @param dateOrder "DAY_FIRST" / "MONTH_FIRST" for dates like 03/04/2027; empty = decide from the file
 	 */
 	@Transactional(readOnly = true, isolation = Isolation.READ_COMMITTED)
-	public RoomAllocationPreviewDTO preview(UUID scheduleGroupId, MultipartFile file, String dateOrder) {
+	public RoomAllocationPreviewDTO preview(UUID scheduleGroupId, MultipartFile file, String dateOrder, String adjustments) {
 		ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
-		Plan plan = plan(file, dateOrder);
+		Plan plan = plan(file, dateOrder, adjustments);
 		LOGGER.info("Room allocation preview: groupId={}, exams={}, sittings={}", group.getId(), plan.exams, plan.sittings.size());
 		return plan.toPreview();
 	}
@@ -101,11 +106,11 @@ public class RoomAllocationService {
 	 * used, without staff. All or nothing. Exams without enough rooms keep their seated part and are reported.
 	 */
 	@Transactional(isolation = Isolation.READ_COMMITTED)
-	public RoomAllocationResults.Saved save(UUID scheduleGroupId, MultipartFile file, String dateOrder) {
+	public RoomAllocationResults.Saved save(UUID scheduleGroupId, MultipartFile file, String dateOrder, String adjustments) {
 		demoModeService.rejectIfDemoUser("room-allocation-save");
 		ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
 		scheduleWriteLock.acquire();
-		Plan plan = plan(file, dateOrder);
+		Plan plan = plan(file, dateOrder, adjustments);
 
 		int nextSortOrder = timeSlotRepository.findAll().stream().mapToInt(TimeSlot::getSortOrder).max().orElse(0) + 1;
 		List<String> slotsCreated = new ArrayList<>();
@@ -144,11 +149,73 @@ public class RoomAllocationService {
 				firstDate = sitting.key().date();
 			}
 		}
+		RoomAllocationBatch batch = new RoomAllocationBatch();
+		batch.setScheduleGroup(group);
+		batch.setFileName(fileName(file));
+		batch.setCreatedBy(currentUserEmail());
+		batch.setExams(plan.exams);
+		batch.setExamRooms(toCreate.size());
+		batch.setStudentsUnplaced(unplaced);
+		batch = batchRepository.save(batch);
+		for (RoomAssignment assignment : toCreate) {
+			assignment.setAllocationBatchId(batch.getId());
+		}
 		List<RoomAssignment> saved = roomAssignmentRepository.saveAll(toCreate);
 		LOGGER.info("Room allocation saved: groupId={}, examRooms={}, slotsCreated={}, unplacedStudents={}",
 			group.getId(), saved.size(), slotsCreated.size(), unplaced);
-		return new RoomAllocationResults.Saved(saved.size(), saved.stream().map(RoomAssignment::getId).toList(),
-			examsSaved, examsIncomplete, unplaced, List.copyOf(slotsCreated), List.copyOf(plan.warnings), firstDate);
+		return new RoomAllocationResults.Saved(batch.getId(), saved.size(), saved.stream().map(RoomAssignment::getId).toList(),
+			examsSaved, examsIncomplete, unplaced, List.copyOf(slotsCreated), List.copyOf(plan.warnings), firstDate, plan.toPreview());
+	}
+
+	// ═══════════════════════════════ Saved allocations and Undo ═══════════════════════════════
+
+	@Transactional(readOnly = true)
+	public List<RoomAllocationResults.Batch> batches(UUID scheduleGroupId) {
+		ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
+		return batchRepository.findAllByScheduleGroupIdOrderByCreatedAtDesc(group.getId()).stream()
+			.map(batch -> new RoomAllocationResults.Batch(batch.getId(), batch.getCreatedAt(), batch.getCreatedBy(), batch.getFileName(),
+				batch.getExams(), batch.getExamRooms(), batch.getStudentsUnplaced(),
+				batch.getUndoneAt() == null ? roomAssignmentRepository.countByAllocationBatchId(batch.getId()) : 0, batch.getUndoneAt()))
+			.toList();
+	}
+
+	/**
+	 * Deletes every exam room (and its staff) that one "Save rooms" created and still exists, also if it was
+	 * changed in the Scheduler since. People's duty counters are corrected. New time slots stay (they may be in
+	 * use elsewhere). All or nothing.
+	 */
+	@Transactional(isolation = Isolation.READ_COMMITTED)
+	public RoomAllocationResults.Undone undo(UUID batchId) {
+		demoModeService.rejectIfDemoUser("room-allocation-undo");
+		scheduleWriteLock.acquire();
+		RoomAllocationBatch batch = batchRepository.findById(batchId)
+			.orElseThrow(() -> new NotFoundException("This saved allocation was not found."));
+		if (batch.getUndoneAt() != null) {
+			throw new com.uniguard.schedule.exception.ConflictException("This allocation was already undone.");
+		}
+		List<RoomAssignment> rooms = roomAssignmentRepository.findAllDetailedByAllocationBatchId(batch.getId());
+		Map<UUID, Integer> previous = StaffConcurrencyRules.countAssignmentOccurrences(rooms);
+		roomAssignmentRepository.deleteAll(rooms);
+		staffConcurrencyRules.applyWorkloadDelta(previous, Map.of());
+		batch.setUndoneAt(java.time.Instant.now());
+		batchRepository.save(batch);
+		LOGGER.info("Room allocation undone: batch={}, examRoomsDeleted={}", batch.getId(), rooms.size());
+		return new RoomAllocationResults.Undone(batch.getId(), batch.getFileName(), rooms.size());
+	}
+
+	private static String fileName(MultipartFile file) {
+		String name = file.getOriginalFilename();
+		if (name == null || name.isBlank()) {
+			return null;
+		}
+		name = name.replace('\\', '/');
+		name = name.substring(name.lastIndexOf('/') + 1).trim();
+		return name.length() > 255 ? name.substring(0, 255) : name;
+	}
+
+	private static String currentUserEmail() {
+		var auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+		return auth == null ? null : auth.getName();
 	}
 
 	// ═══════════════════════════════ Create schedule ═══════════════════════════════
@@ -179,7 +246,8 @@ public class RoomAllocationService {
 		AutoAssignmentService.StaffingResult result = autoAssignmentService.assignStaff(group.getId(), new ArrayList<>(empty));
 		LOGGER.info("Room allocation staffed: groupId={}, examRooms={}, skipped={}", group.getId(), empty.size(), found.size() - empty.size());
 		return new RoomAllocationResults.Staffed(empty.size(), found.size() - empty.size(),
-			result.chiefSlotsTotal(), result.chiefSlotsFilled(), result.invigilatorSlotsTotal(), result.invigilatorSlotsFilled(), result.warnings());
+			result.chiefSlotsTotal(), result.chiefSlotsFilled(), result.invigilatorSlotsTotal(), result.invigilatorSlotsFilled(), result.warnings(),
+			staffHints(empty));
 	}
 
 	// ═══════════════════════════════ Template ═══════════════════════════════
@@ -324,10 +392,39 @@ public class RoomAllocationService {
 	 * @param gender    MALE/FEMALE: halls of that gender first, then Mixed halls; null = any hall (Mixed first)
 	 */
 	private record ExamRow(int row, LocalDate date, LocalTime start, LocalTime end, String subjectName, String subjectCode, int students,
-		RoomCategory roomType, boolean autoTime, HallGender gender) {
+		RoomCategory roomType, boolean autoTime, HallGender gender, List<UUID> pinnedRooms, boolean edited, boolean fillMore) {
 	}
 
-	private List<ExamRow> readRows(TabularFile.Table table, TimetableColumns columns, TimetableColumns.DateOrder order, List<String> warnings) {
+	/**
+	 * Changes the user made on the page before saving: another time for a row ("HH:mm-HH:mm") and/or the exact rooms
+	 * for a row. They are applied on top of the file every time the plan is made (preview and save).
+	 */
+	record Adjustments(Map<Integer, String> times, Map<Integer, List<UUID>> rooms, Map<Integer, String> dates, Map<Integer, UUID> anchors) {
+		static final Adjustments NONE = new Adjustments(Map.of(), Map.of(), Map.of(), Map.of());
+
+		static Adjustments parse(String json, com.fasterxml.jackson.databind.ObjectMapper mapper) {
+			if (json == null || json.isBlank()) {
+				return NONE;
+			}
+			try {
+				Adjustments parsed = mapper.readValue(json, Adjustments.class);
+				Map<Integer, String> times = parsed.times() == null ? Map.of() : parsed.times();
+				Map<Integer, List<UUID>> rooms = parsed.rooms() == null ? Map.of() : parsed.rooms();
+				Map<Integer, String> dates = parsed.dates() == null ? Map.of() : parsed.dates();
+				Map<Integer, UUID> anchors = parsed.anchors() == null ? Map.of() : parsed.anchors();
+				if (times.size() > MAX_ROWS || rooms.size() > MAX_ROWS || dates.size() > MAX_ROWS || anchors.size() > MAX_ROWS
+					|| rooms.values().stream().anyMatch(list -> list == null || list.size() > 200)) {
+					throw new ValidationException("Too many changes.");
+				}
+				return new Adjustments(times, rooms, dates, anchors);
+			} catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+				throw new ValidationException("Your changes could not be read. Undo them and try again.");
+			}
+		}
+	}
+
+	private List<ExamRow> readRows(TabularFile.Table table, TimetableColumns columns, TimetableColumns.DateOrder order, List<String> warnings,
+	                               Adjustments adjustments) {
 		List<BulkUploadErrorDTO> errors = new ArrayList<>();
 		List<ExamRow> rows = new ArrayList<>();
 		Map<String, Integer> seen = new HashMap<>();
@@ -336,8 +433,34 @@ public class RoomAllocationService {
 			int rowNumber = row.rowNumber();
 			List<String> rowErrors = new ArrayList<>();
 			LocalDate date = TimetableColumns.parseDate(columns.cell(row, TimetableColumns.Field.DATE), order, rowErrors);
+			String movedToDay = adjustments.dates().get(rowNumber);
+			if (movedToDay != null) { // the user moved this exam to another day on the page
+				try {
+					date = LocalDate.parse(movedToDay);
+				} catch (java.time.format.DateTimeParseException exception) {
+					rowErrors.add("The date you chose (" + movedToDay + ") is not a date.");
+				}
+			}
 			boolean autoTime = columns.timeBlank(row);
-			LocalTime[] times = autoTime ? null : columns.times(row, rowErrors);
+			LocalTime[] times;
+			String movedTo = adjustments.times().get(rowNumber);
+			if (movedTo != null) { // the user moved this exam on the page
+				times = TimetableColumns.parseRange(movedTo);
+				autoTime = false;
+				if (times == null || !times[1].isAfter(times[0])) {
+					rowErrors.add("The time you chose (" + movedTo + ") is not a time slot.");
+				}
+			} else {
+				times = autoTime ? null : columns.times(row, rowErrors);
+			}
+			List<UUID> pinned = adjustments.rooms().get(rowNumber);
+			UUID anchor = adjustments.anchors().get(rowNumber); // dropped on one room: start there, add rooms when needed
+			if (pinned == null && anchor != null) {
+				pinned = List.of(anchor);
+			}
+			if (pinned != null && autoTime) {
+				rowErrors.add("Choose a time for this exam when you choose its rooms.");
+			}
 			String name = optionalText(columns.subjectName(row), SUBJECT_NAME_MAX_LENGTH, Messages.SCHEDULE_BULK_ROW_SUBJECT_NAME_TOO_LONG, rowErrors);
 			String code = optionalText(columns.subjectCode(row), SUBJECT_CODE_MAX_LENGTH, Messages.SCHEDULE_BULK_ROW_SUBJECT_CODE_TOO_LONG, rowErrors);
 			if (name == null && code == null && rowErrors.isEmpty()) {
@@ -362,7 +485,19 @@ public class RoomAllocationService {
 					+ ". Put all its students in one row (or one row for Male and one for Female)."));
 				continue;
 			}
-			rows.add(new ExamRow(rowNumber, date, autoTime ? null : times[0], autoTime ? null : times[1], name, code, students, roomType, autoTime, gender));
+			rows.add(new ExamRow(rowNumber, date, autoTime ? null : times[0], autoTime ? null : times[1], name, code, students, roomType, autoTime, gender,
+				pinned == null ? null : List.copyOf(new java.util.LinkedHashSet<>(pinned)), movedTo != null || pinned != null || movedToDay != null,
+				anchor != null && adjustments.rooms().get(rowNumber) == null));
+		}
+		Set<Integer> known = rows.stream().map(ExamRow::row).collect(Collectors.toSet());
+		Set<Integer> changedRows = new java.util.TreeSet<>(adjustments.times().keySet());
+		changedRows.addAll(adjustments.rooms().keySet());
+		changedRows.addAll(adjustments.dates().keySet());
+		changedRows.addAll(adjustments.anchors().keySet());
+		for (Integer changed : changedRows) {
+			if (!known.contains(changed) && errors.stream().noneMatch(error -> error.row() == changed)) {
+				errors.add(new BulkUploadErrorDTO(changed, "You changed row " + changed + " on the page, but this file has no exam in that row. Undo your changes."));
+			}
 		}
 		if (!errors.isEmpty()) {
 			errors.sort(Comparator.comparingInt(BulkUploadErrorDTO::row));
@@ -497,7 +632,11 @@ public class RoomAllocationService {
 		final List<PlannedSitting> sittings = new ArrayList<>();
 		final List<String> warnings = new ArrayList<>();
 		final List<String> slotsToCreate = new ArrayList<>();
+		/** How to fix, per file row. */
+		final Map<Integer, List<String>> hints = new HashMap<>();
 		List<String> columnsRecognised = List.of();
+		/** Rooms already booked outside this plan on the plan's days (for the room view). */
+		final List<RoomAllocationPreviewDTO.Booked> booked = new ArrayList<>();
 		int exams;
 
 		RoomAllocationPreviewDTO toPreview() {
@@ -523,8 +662,8 @@ public class RoomAllocationService {
 					examDtos.add(new RoomAllocationPreviewDTO.Exam(row.row(), row.subjectName(), row.subjectCode(), row.students(),
 						row.roomType() == null ? null : row.roomType().getName(),
 						row.roomType() == null ? null : sitting.freeOfType().getOrDefault(row.roomType().getId(), 0),
-						row.autoTime(), genderLabel(row.gender()), sitting.mixedHalls().contains(Integer.parseInt(placement.exam().key())),
-						placement.unplaced(), roomDtos));
+						row.autoTime(), row.edited(), genderLabel(row.gender()), sitting.mixedHalls().contains(Integer.parseInt(placement.exam().key())),
+						placement.unplaced(), roomDtos, hints.getOrDefault(row.row(), List.of())));
 				}
 				examDtos.sort(Comparator.comparingInt(RoomAllocationPreviewDTO.Exam::row));
 				SittingKey key = sitting.key();
@@ -538,11 +677,12 @@ public class RoomAllocationService {
 			}
 			int placed = students - unplaced;
 			return new RoomAllocationPreviewDTO(exams, fullySeated, students, unplaced, roomsUsed, seats, seats - placed,
-				List.copyOf(sittingDtos), List.copyOf(warnings), List.copyOf(slotsToCreate), columnsRecognised);
+				List.copyOf(sittingDtos), List.copyOf(warnings), List.copyOf(slotsToCreate), columnsRecognised, List.copyOf(booked));
 		}
 	}
 
-	private Plan plan(MultipartFile file, String dateOrder) {
+	private Plan plan(MultipartFile file, String dateOrder, String adjustmentsJson) {
+		Adjustments adjustments = Adjustments.parse(adjustmentsJson, objectMapper);
 		TabularFile.Table table = TabularFile.read(file, MAX_ROWS);
 		if (table.rows().isEmpty()) {
 			throw new ValidationException(Messages.SCHEDULE_BULK_UPLOAD_EMPTY);
@@ -562,7 +702,7 @@ public class RoomAllocationService {
 
 		Plan plan = new Plan();
 		plan.columnsRecognised = columns.recognised();
-		List<ExamRow> rows = readRows(table, columns, order, plan.warnings);
+		List<ExamRow> rows = readRows(table, columns, order, plan.warnings, adjustments);
 		plan.exams = rows.size();
 
 		Map<SittingKey, List<ExamRow>> bySitting = new TreeMap<>();
@@ -584,6 +724,14 @@ public class RoomAllocationService {
 		}
 		Set<LocalDate> dates = rows.stream().map(ExamRow::date).collect(Collectors.toSet());
 		SchedulingContext context = contextLoader.load(dates); // rooms already booked, in every exam period
+		for (RoomAssignment existing : context.universe()) { // shown as "Booked" in the room view
+			if (existing.getId() != null && existing.getRoom() != null && existing.getTimeSlot() != null) {
+				String what = existing.getSubjectCode() != null ? existing.getSubjectCode() : existing.getSubjectName();
+				plan.booked.add(new RoomAllocationPreviewDTO.Booked(existing.getExamDate(),
+					existing.getTimeSlot().getStartTime().format(HH_MM) + "–" + existing.getTimeSlot().getEndTime().format(HH_MM),
+					existing.getRoom().getId(), what == null ? "Booked" : "Booked: " + what));
+			}
+		}
 
 		for (Map.Entry<SittingKey, List<ExamRow>> entry : bySitting.entrySet()) {
 			SittingKey key = entry.getKey();
@@ -603,11 +751,17 @@ public class RoomAllocationService {
 			List<ExamRow> sittingRows = entry.getValue();
 			PlannedSitting sitting = new PlannedSitting(key, slot, freeNormal, new HashMap<>(), sittingRows,
 				new ArrayList<>(java.util.Collections.nCopies(sittingRows.size(), (RoomAllocator.Placement<Room>) null)), new java.util.HashSet<>());
-			List<Integer> all = new ArrayList<>();
+			// Rooms the user chose on the page go first, exactly; then the other exams are seated around them.
+			List<Integer> rest = new ArrayList<>();
 			for (int i = 0; i < sittingRows.size(); i++) {
-				all.add(i);
+				ExamRow examRow = sittingRows.get(i);
+				if (examRow.pinnedRooms() != null) {
+					sitting.placements().set(i, seatPinned(plan, examRow, i, free, activeRooms, key));
+				} else {
+					rest.add(i);
+				}
 			}
-			seatSitting(sitting, all, free);
+			seatSitting(sitting, rest, free);
 			for (int i = 0; i < sittingRows.size(); i++) {
 				for (RoomAllocator.Seating<Room> seating : sitting.placements().get(i).rooms()) {
 					context.add(booking(seating.room().id(), slot, key.date())); // later overlapping sittings see it as taken
@@ -619,10 +773,65 @@ public class RoomAllocationService {
 		if (!autoRows.isEmpty()) {
 			chooseTimes(plan, autoRows, activeRooms, context);
 		}
+		addHints(plan, activeRooms, context);
 		return plan;
 	}
 
 	// ═══════════════════════════════ Seating (room type + hall gender) ═══════════════════════════════
+
+	/**
+	 * An exam whose rooms the user chose: exactly those rooms, in that order, as far as they are free. A room that
+	 * is booked meanwhile, out of service or not needed is left out with a warning.
+	 */
+	private static RoomAllocator.Placement<Room> seatPinned(Plan plan, ExamRow row, int index, List<RoomAllocator.RoomOption<Room>> free,
+	                                                       List<Room> activeRooms, SittingKey key) {
+		List<RoomAllocator.Seating<Room>> seats = new ArrayList<>();
+		int left = row.students();
+		for (UUID roomId : row.pinnedRooms()) {
+			RoomAllocator.RoomOption<Room> option = free.stream().filter(candidate -> candidate.id().getId().equals(roomId)).findFirst().orElse(null);
+			if (option == null) {
+				String name = activeRooms.stream().filter(room -> room.getId().equals(roomId)).map(Room::getName).findFirst().orElse(null);
+				plan.warnings.add("Row " + row.row() + ": " + (name == null
+					? "a room you chose is not in service any more, so it was left out."
+					: "room " + name + " is not free at " + key.start().format(HH_MM) + "–" + key.end().format(HH_MM) + " on " + key.date()
+						+ " (another exam has it), so it was left out."));
+				continue;
+			}
+			if (!usable(row, option.id(), false)) { // the server checks the room type and hall gender again: never trust the page
+				Room room = option.id();
+				plan.warnings.add("Row " + row.row() + ": room " + option.name() + (typeFits(row.roomType(), room)
+					? " is a " + genderLabel(hallOf(room)) + " hall and this exam is " + genderLabel(row.gender())
+					: (row.roomType() == null
+						? " is a “" + room.getCategory().getName() + "” room, only for exams that ask for it"
+						: " is not a “" + row.roomType().getName() + "” room"))
+					+ ", so it was left out.");
+				continue;
+			}
+			if (left <= 0) {
+				plan.warnings.add("Row " + row.row() + ": room " + option.name() + " is not needed (the other rooms you chose seat everyone), so it was left free.");
+				continue;
+			}
+			int here = Math.min(left, option.capacity());
+			seats.add(new RoomAllocator.Seating<>(option, here));
+			left -= here;
+			free.remove(option);
+		}
+		if (row.fillMore() && left > 0) {
+			// Dropped on a room that is too small: add rooms of the right kind, the same building first.
+			String building = seats.isEmpty() ? "" : seats.get(0).room().group();
+			List<RoomAllocator.RoomOption<Room>> usableRooms = free.stream().filter(option -> usable(row, option.id(), false)).toList();
+			List<RoomAllocator.RoomOption<Room>> sameBuilding = usableRooms.stream().filter(option -> option.group().equals(building)).toList();
+			List<RoomAllocator.RoomOption<Room>> pool = !building.isEmpty() && sameBuilding.stream().mapToInt(RoomAllocator.RoomOption::capacity).sum() >= left
+				? sameBuilding : usableRooms;
+			RoomAllocator.Placement<Room> more = RoomAllocator.allocate(List.of(new RoomAllocator.Exam("more", left)), pool).get(0);
+			for (RoomAllocator.Seating<Room> seating : more.rooms()) {
+				seats.add(seating);
+				free.remove(seating.room());
+			}
+			left = more.unplaced();
+		}
+		return new RoomAllocator.Placement<>(new RoomAllocator.Exam(Integer.toString(index), row.students()), List.copyOf(seats), left);
+	}
 
 	/** One exam's rooms; {@code mixedHalls} = a Male/Female exam that needed Mixed halls. */
 	private record Seated(RoomAllocator.Placement<Room> placement, boolean mixedHalls) {
@@ -745,6 +954,228 @@ public class RoomAllocationService {
 			plan.warnings.add("Row " + row.row() + ": not enough free " + genderLabel(row.gender()) + " halls on " + key.date() + " " + time
 				+ ": " + inMixed + " students placed in Mixed halls.");
 		}
+	}
+
+	// ═══════════════════════════════ How to fix (hints) ═══════════════════════════════
+
+	private static final java.time.format.DateTimeFormatter DAY_MONTH = java.time.format.DateTimeFormatter.ofPattern("d MMM", Locale.ENGLISH);
+
+	/** Rooms this exam may use: its room type, and halls of its gender or Mixed (any hall when no gender). */
+	private static boolean usable(ExamRow row, Room room, boolean ownGenderOnly) {
+		if (!typeFits(row.roomType(), room)) {
+			return false;
+		}
+		if (row.gender() == null) {
+			return true;
+		}
+		return hallOf(room) == row.gender() || (!ownGenderOnly && hallOf(room) == HallGender.MIXED);
+	}
+
+	private static String kind(ExamRow row, boolean ownGenderOnly) {
+		String type = row.roomType() == null ? "" : "“" + row.roomType().getName() + "” ";
+		if (row.gender() != null && ownGenderOnly) {
+			return type + genderLabel(row.gender()) + " halls";
+		}
+		return type + "rooms";
+	}
+
+	/** The exam asks for a room type whose rooms together cannot seat it (or that has no rooms at all). */
+	private static boolean typeTooSmall(ExamRow row, List<Room> activeRooms) {
+		return row.roomType() != null
+			&& activeRooms.stream().filter(room -> typeFits(row.roomType(), room)).mapToInt(Room::getCapacity).sum() < row.students();
+	}
+
+	private static String names(List<Room> rooms, int max) {
+		return String.join(", ", rooms.stream().limit(max).map(room -> room.getName() + " (" + room.getCapacity() + ")").toList())
+			+ (rooms.size() > max ? " …" : "");
+	}
+
+	/**
+	 * Concrete suggestions for every exam with students without a seat, or a Male/Female exam that needed Mixed
+	 * halls. Computed from the university's own rooms, times and this plan (after everything is placed).
+	 */
+	private void addHints(Plan plan, List<Room> activeRooms, SchedulingContext context) {
+		List<TimeSlot> slots = new ArrayList<>(timeSlotRepository.findByActiveTrueOrderBySortOrderAsc().stream()
+			.collect(Collectors.toMap(slot -> timesKey(slot.getStartTime(), slot.getEndTime()), slot -> slot, (a, b) -> a, LinkedHashMap::new))
+			.values());
+		slots.sort(Comparator.comparing(TimeSlot::getStartTime).thenComparing(TimeSlot::getEndTime));
+		List<Room> inactive = roomRepository.findAll().stream().filter(room -> !room.isActive()).sorted(Comparator.comparing(Room::getName)).toList();
+		Map<String, List<RoomAllocator.RoomOption<Room>>> freeCache = new HashMap<>();
+
+		for (PlannedSitting sitting : plan.sittings) {
+			for (int i = 0; i < sitting.rows().size(); i++) {
+				RoomAllocator.Placement<Room> placement = sitting.placements().get(i);
+				ExamRow row = sitting.rows().get(i);
+				boolean mixed = sitting.mixedHalls().contains(i);
+				if (placement == null || (placement.unplaced() == 0 && !mixed)) {
+					continue;
+				}
+				boolean ownOnly = placement.unplaced() == 0 && mixed; // seated, but partly in Mixed halls
+				String kind = kind(row, ownOnly);
+				String day = row.date().format(DAY_MONTH);
+				String here = sitting.key().start().format(HH_MM) + "–" + sitting.key().end().format(HH_MM);
+				List<String> hints = new ArrayList<>();
+
+				// 1. Another time that day with enough free rooms for the whole exam.
+				List<String> better = new ArrayList<>();
+				for (TimeSlot slot : slots) {
+					if (slot.getStartTime().equals(sitting.key().start()) && slot.getEndTime().equals(sitting.key().end())) {
+						continue;
+					}
+					List<RoomAllocator.RoomOption<Room>> free = freeCache.computeIfAbsent(row.date() + "@" + timesKey(slot.getStartTime(), slot.getEndTime()),
+						key -> freeRooms(activeRooms, context, slot, row.date()));
+					List<Room> fitting = free.stream().map(RoomAllocator.RoomOption::id).filter(room -> usable(row, room, ownOnly)).toList();
+					int seats = fitting.stream().mapToInt(Room::getCapacity).sum();
+					if (seats >= row.students()) {
+						better.add(slot.getStartTime().format(HH_MM) + "–" + slot.getEndTime().format(HH_MM) + " (" + fitting.size() + " free " + kind + ", " + seats + " seats)");
+					}
+				}
+				if (!better.isEmpty()) {
+					hints.add("Move it to another time on " + day + ": " + String.join(" or ", better.stream().limit(2).toList())
+						+ " has enough for all " + row.students() + " students. Change the time in your file"
+						+ (row.autoTime() ? "." : ", or leave it empty so Uni-Guard chooses."));
+				} else if (!ownOnly && !typeTooSmall(row, activeRooms)) { // a type without enough rooms has its own hint below
+					hints.add("No time on " + day + " has enough free " + kind + " for " + row.students() + " students: give it another date in your file, "
+						+ "or split it into two rows (for example two groups at different times).");
+				}
+
+				// 2. The room type: no rooms at all, or too few seats in total.
+				if (row.roomType() != null) {
+					List<Room> ofType = activeRooms.stream().filter(room -> typeFits(row.roomType(), room)).toList();
+					int typeSeats = ofType.stream().mapToInt(Room::getCapacity).sum();
+					// Example rooms only for lab types (a lab is a fair guess for "Computer Lab"; not for "Drawing Studio").
+					boolean labType = RoomNames.looksLikeLab(row.roomType().getName());
+					List<Room> candidates = !labType ? List.of() : activeRooms.stream()
+						.filter(room -> !typeFits(row.roomType(), room) && (room.isSpecial() || RoomNames.looksLikeLab(room.getName())))
+						.sorted(Comparator.comparing(Room::getName)).toList();
+					if (ofType.isEmpty()) {
+						hints.add("No room has the type “" + row.roomType().getName() + "”. On the Rooms page give this type to the right rooms"
+							+ (candidates.isEmpty() ? "" : " (for example " + names(candidates, 3) + ")") + ", then choose rooms again.");
+					} else if (typeSeats < row.students()) {
+						hints.add("All “" + row.roomType().getName() + "” rooms together have only " + typeSeats + " seats for " + row.students()
+							+ " students: give this type to more rooms (Rooms page), or split the exam into two rows at different times.");
+					}
+				}
+
+				// 3. A smaller exam at the same time that fits elsewhere and frees rooms this exam can use.
+				if (placement.unplaced() > 0) {
+					String move = null;
+					int moveStudents = Integer.MAX_VALUE;
+					for (int j = 0; j < sitting.rows().size(); j++) {
+						ExamRow other = sitting.rows().get(j);
+						RoomAllocator.Placement<Room> otherPlacement = sitting.placements().get(j);
+						if (j == i || otherPlacement == null || otherPlacement.rooms().isEmpty() || subjectKey(other).equals(subjectKey(row))) {
+							continue;
+						}
+						int freed = otherPlacement.rooms().stream().filter(seating -> usable(row, seating.room().id(), false))
+							.mapToInt(seating -> seating.room().capacity()).sum();
+						if (freed < placement.unplaced() || other.students() >= moveStudents) {
+							continue;
+						}
+						for (TimeSlot slot : slots) {
+							if (slot.getStartTime().equals(sitting.key().start()) && slot.getEndTime().equals(sitting.key().end())) {
+								continue;
+							}
+							List<RoomAllocator.RoomOption<Room>> free = freeCache.computeIfAbsent(row.date() + "@" + timesKey(slot.getStartTime(), slot.getEndTime()),
+								key -> freeRooms(activeRooms, context, slot, row.date()));
+							int seats = free.stream().map(RoomAllocator.RoomOption::id).filter(room -> usable(other, room, false)).mapToInt(Room::getCapacity).sum();
+							if (seats >= other.students()) {
+								move = (other.subjectCode() != null ? other.subjectCode() : other.subjectName()) + " (" + other.students()
+									+ " students, row " + other.row() + ") to " + slot.getStartTime().format(HH_MM) + "–" + slot.getEndTime().format(HH_MM);
+								moveStudents = other.students();
+								break;
+							}
+						}
+					}
+					if (move != null) {
+						hints.add("Or move " + move + ": it fits there, and its rooms at " + here + " can then take the "
+							+ placement.unplaced() + " students without a seat.");
+					}
+				}
+
+				// 4. Rooms out of service that this exam could use.
+				List<Room> backInService = inactive.stream().filter(room -> usable(row, room, ownOnly)).toList();
+				if (!backInService.isEmpty()) {
+					hints.add("Out of service now: " + names(backInService, 3) + ". Putting them back in service (Rooms page) adds "
+						+ backInService.stream().mapToInt(Room::getCapacity).sum() + " seats.");
+				}
+
+				// 5. Gender: too few halls of that gender in the whole university.
+				if (row.gender() != null) {
+					int ownSeats = activeRooms.stream().filter(room -> typeFits(row.roomType(), room) && hallOf(room) == row.gender()).mapToInt(Room::getCapacity).sum();
+					if (ownSeats < row.students()) {
+						hints.add("Only " + ownSeats + " seats are in " + genderLabel(row.gender()) + " halls" + (row.roomType() == null ? "" : " of this type")
+							+ " for " + row.students() + " students: mark more halls as " + genderLabel(row.gender()) + " on the Rooms page.");
+					}
+				}
+				plan.hints.put(row.row(), List.copyOf(hints));
+			}
+		}
+	}
+
+	/**
+	 * After Create schedule: for each time with empty seats, why staff are missing (not working that weekday,
+	 * on leave, gendered halls) and what to do.
+	 */
+	private List<String> staffHints(List<RoomAssignment> staffed) {
+		record Gap(LocalDate date, TimeSlot slot) {
+		}
+		Map<String, Gap> gaps = new TreeMap<>();
+		Map<String, int[]> empty = new HashMap<>(); // {invigilator seats, chief seats, female-hall seats, male-hall seats}
+		for (RoomAssignment assignment : staffed) {
+			int invigilators = (int) assignment.getInvigilatorAssignments().stream().filter(seat -> seat.isRequired() && seat.getInvigilator() == null).count();
+			int chief = assignment.getChiefInvigilator() == null ? 1 : 0;
+			if (invigilators == 0 && chief == 0) {
+				continue;
+			}
+			String key = assignment.getExamDate() + "@" + assignment.getTimeSlot().getStartTime() + "-" + assignment.getTimeSlot().getEndTime();
+			gaps.putIfAbsent(key, new Gap(assignment.getExamDate(), assignment.getTimeSlot()));
+			int[] counts = empty.computeIfAbsent(key, k -> new int[4]);
+			counts[0] += invigilators;
+			counts[1] += chief;
+			HallGender hall = hallOf(assignment.getRoom());
+			if (hall == HallGender.FEMALE) {
+				counts[2] += invigilators + chief;
+			} else if (hall == HallGender.MALE) {
+				counts[3] += invigilators + chief;
+			}
+		}
+		if (gaps.isEmpty()) {
+			return List.of();
+		}
+		List<Person> invigilators = personRepository.findAllByRoleAndActiveTrue(PersonRole.INVIGILATOR);
+		List<Person> chiefs = personRepository.findAllByRoleAndActiveTrue(PersonRole.CHIEF_INVIGILATOR);
+		SchedulingContext context = contextLoader.load(gaps.values().stream().map(Gap::date).collect(Collectors.toSet()));
+		List<String> hints = new ArrayList<>();
+		for (Map.Entry<String, Gap> entry : gaps.entrySet()) {
+			Gap gap = entry.getValue();
+			int[] counts = empty.get(entry.getKey());
+			String weekday = gap.date().getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH);
+			List<Person> pool = counts[0] > 0 ? invigilators : chiefs;
+			String role = counts[0] > 0 ? "invigilators" : "chiefs";
+			long notWorking = pool.stream().filter(person -> !StaffConcurrencyRules.isAvailable(person, gap.date())).count();
+			long onLeave = pool.stream().filter(person -> StaffConcurrencyRules.isAvailable(person, gap.date()) && context.leaveOn(person.getId(), gap.date()).isPresent()).count();
+			StringBuilder hint = new StringBuilder();
+			hint.append(gap.date().format(DAY_MONTH)).append(' ').append(StaffConcurrencyRules.describeSlot(gap.slot())).append(": ");
+			List<String> missing = new ArrayList<>();
+			if (counts[0] > 0) {
+				missing.add(counts[0] + " invigilator seat" + (counts[0] == 1 ? "" : "s"));
+			}
+			if (counts[1] > 0) {
+				missing.add(counts[1] + " chief seat" + (counts[1] == 1 ? "" : "s"));
+			}
+			hint.append(String.join(" and ", missing)).append(" empty. Of ").append(pool.size()).append(' ').append(role).append(", ")
+				.append(notWorking).append(" don't work on ").append(weekday).append(onLeave > 0 ? " and " + onLeave + " are on leave" : "")
+				.append(". Add ").append(weekday).append(" to some of them (People page), add staff, or move an exam from this time to a quieter one.");
+			if (counts[2] > 0) {
+				hint.append(' ').append(counts[2]).append(" of the empty seats are in Female halls: only female staff can sit there.");
+			}
+			if (counts[3] > 0) {
+				hint.append(' ').append(counts[3]).append(" of the empty seats are in Male halls: only male staff can sit there.");
+			}
+			hints.add(hint.toString());
+		}
+		return hints;
 	}
 
 	// ═══════════════════════════════ Automatic time slots ═══════════════════════════════
@@ -898,7 +1329,7 @@ public class RoomAllocationService {
 		List<RoomAllocator.RoomOption<Room>> free = new ArrayList<>();
 		for (Room room : activeRooms) {
 			if (StaffConcurrencyRules.findRoomOverlap(context.universe(), booking(room, slot, date)).isEmpty()) {
-				free.add(new RoomAllocator.RoomOption<>(room, room.getName(), room.getCapacity()));
+				free.add(new RoomAllocator.RoomOption<>(room, room.getName(), room.getCapacity(), room.buildingKey()));
 			}
 		}
 		return free;

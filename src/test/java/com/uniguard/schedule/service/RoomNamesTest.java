@@ -21,4 +21,16 @@ class RoomNamesTest {
 			assertThat(RoomNames.looksLikeLab(name)).as(String.valueOf(name)).isFalse();
 		}
 	}
+
+	@Test
+	void guessesTheBuildingFromTheName() {
+		assertThat(RoomNames.guessBuilding("H101")).isEqualTo("H");
+		assertThat(RoomNames.guessBuilding("M214 (draft)")).isEqualTo("M");
+		assertThat(RoomNames.guessBuilding("s-12")).isEqualTo("S");
+		assertThat(RoomNames.guessBuilding("ENG2.05")).isEqualTo("ENG");
+		assertThat(RoomNames.guessBuilding("Lab 2")).isNull();
+		assertThat(RoomNames.guessBuilding("Hall 100")).isNull();
+		assertThat(RoomNames.guessBuilding("Library")).isNull();
+		assertThat(RoomNames.guessBuilding(null)).isNull();
+	}
 }

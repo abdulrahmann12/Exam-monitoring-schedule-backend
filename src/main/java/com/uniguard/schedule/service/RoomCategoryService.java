@@ -146,6 +146,18 @@ public class RoomCategoryService {
 			rooms.saveAll(untyped);
 			LOGGER.warn("[ROOM-TYPES] {} room(s) without a type got one from their name (Lab / Classroom).", typed);
 		}
+		// V20: rooms whose building was never set get it from their name ("H101" → H). "" (chosen "no building") stays.
+		List<Room> noBuilding = rooms.findAll().stream().filter(room -> room.getBuilding() == null).toList();
+		int located = 0;
+		for (Room room : noBuilding) {
+			String guess = RoomNames.guessBuilding(room.getName());
+			room.setBuilding(guess != null ? guess : "");
+			located += guess != null ? 1 : 0;
+		}
+		if (!noBuilding.isEmpty()) {
+			rooms.saveAll(noBuilding);
+			LOGGER.warn("[ROOMS] {} room(s) got a building from their name.", located);
+		}
 	}
 
 	private void requireUniqueName(String name, UUID existingId) {

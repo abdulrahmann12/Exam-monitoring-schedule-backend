@@ -71,6 +71,9 @@ public final class AuditRoutes {
 		route("POST /api/room-allocation/save", "ROOMS_ALLOCATED", AuditCategory.SCHEDULES, null, null, (body, name) ->
 			"Saved automatic room allocation" + (body instanceof com.uniguard.schedule.dto.allocation.RoomAllocationResults.Saved r
 				? ": " + r.roomAssignmentsCreated() + " exam rooms" + (r.studentsUnplaced() > 0 ? ", " + r.studentsUnplaced() + " students without a seat" : "") : "")),
+		route("POST /api/room-allocation/batches/{id}/undo", "ROOMS_ALLOCATION_UNDONE", AuditCategory.SCHEDULES, null, null, (body, name) ->
+			"Undid a saved room allocation" + (body instanceof com.uniguard.schedule.dto.allocation.RoomAllocationResults.Undone r
+				? (r.fileName() == null ? "" : " (" + r.fileName() + ")") + ": " + r.examRoomsDeleted() + " exam rooms deleted" : "")),
 		route("POST /api/room-allocation/staff", "SCHEDULE_CREATED", AuditCategory.SCHEDULES, null, null, (body, name) ->
 			"Created schedule (staff) for allocated rooms" + (body instanceof com.uniguard.schedule.dto.allocation.RoomAllocationResults.Staffed r
 				? ": " + r.examRooms() + " exam rooms, chiefs " + r.chiefSlotsFilled() + "/" + r.chiefSlotsTotal()

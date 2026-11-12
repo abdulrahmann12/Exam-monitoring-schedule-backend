@@ -77,6 +77,53 @@ public class AssignmentService {
         return PageResponse.from(new PageImpl<>(ordered, pageable, assignmentIds.getTotalElements()));
     }
 
+    /**
+     * Who is busy at {@code date} / {@code slotId} outside {@code scheduleGroupId} (other schedule groups at an
+     * overlapping time) or on leave that day. The Scheduler page only loads its own group, so without this its
+     * staff picker would offer people the server then refuses.
+     */
+    @Transactional(readOnly = true)
+    public com.uniguard.schedule.dto.assignment.BusyElsewhereResponse busyElsewhere(UUID scheduleGroupId, LocalDate date, UUID slotId) {
+        UUID groupId = scheduleGroupSupport.requireGroup(scheduleGroupId).getId();
+        TimeSlot slot = timeSlotRepository.findById(slotId)
+                .orElseThrow(() -> new NotFoundException("Time slot not found."));
+        SchedulingContext context = contextLoader.load(List.of(date));
+        java.time.format.DateTimeFormatter hhmm = java.time.format.DateTimeFormatter.ofPattern("HH:mm");
+        record Busy(boolean[] invigilator, int[] chiefRooms, StringBuilder reason) {
+        }
+        Map<UUID, Busy> byPerson = new java.util.LinkedHashMap<>();
+        for (RoomAssignment other : context.universe()) {
+            if (other.getScheduleGroup() == null || groupId.equals(other.getScheduleGroup().getId())
+                    || !date.equals(other.getExamDate()) || !StaffConcurrencyRules.overlaps(slot, other.getTimeSlot())) {
+                continue;
+            }
+            String where = "Busy in " + other.getScheduleGroup().getName() + " at "
+                    + other.getTimeSlot().getStartTime().format(hhmm) + "–" + other.getTimeSlot().getEndTime().format(hhmm);
+            if (other.getChiefInvigilator() != null) {
+                Busy busy = byPerson.computeIfAbsent(other.getChiefInvigilator().getId(), id -> new Busy(new boolean[1], new int[1], new StringBuilder(where)));
+                busy.chiefRooms()[0]++;
+            }
+            if (other.getInvigilatorAssignments() != null) {
+                for (InvigilatorAssignment seat : other.getInvigilatorAssignments()) {
+                    if (seat.getInvigilator() != null) {
+                        byPerson.computeIfAbsent(seat.getInvigilator().getId(), id -> new Busy(new boolean[1], new int[1], new StringBuilder(where)))
+                                .invigilator()[0] = true;
+                    }
+                }
+            }
+        }
+        List<com.uniguard.schedule.dto.assignment.BusyElsewhereResponse.Person> people = new ArrayList<>();
+        byPerson.forEach((personId, busy) -> people.add(new com.uniguard.schedule.dto.assignment.BusyElsewhereResponse.Person(
+                personId, busy.invigilator()[0], busy.chiefRooms()[0], context.leaveOn(personId, date).isPresent(),
+                context.leaveOn(personId, date).isPresent() ? "On leave" : busy.reason().toString())));
+        for (Person person : personRepository.findAll()) {
+            if (!byPerson.containsKey(person.getId()) && context.leaveOn(person.getId(), date).isPresent()) {
+                people.add(new com.uniguard.schedule.dto.assignment.BusyElsewhereResponse.Person(person.getId(), false, 0, true, "On leave"));
+            }
+        }
+        return new com.uniguard.schedule.dto.assignment.BusyElsewhereResponse(people);
+    }
+
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public RoomAssignmentResponse createAssignment(@Valid RoomAssignmentRequest request) {
         scheduleWriteLock.acquire();

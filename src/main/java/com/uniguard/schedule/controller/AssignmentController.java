@@ -94,6 +94,13 @@ public class AssignmentController {
 		return assignmentService.generatePreview(request);
 	}
 
+	/** People busy at that date and time in other schedule groups, or on leave: the Scheduler's picker hides them. */
+	@GetMapping("/busy-elsewhere")
+	public com.uniguard.schedule.dto.assignment.BusyElsewhereResponse busyElsewhere(
+		@RequestParam UUID scheduleGroupId, @RequestParam LocalDate date, @RequestParam UUID slotId) {
+		return assignmentService.busyElsewhere(scheduleGroupId, date, slotId);
+	}
+
 	@PutMapping("/{id}")
 	public RoomAssignmentResponse updateAssignment(@PathVariable UUID id, @Valid @RequestBody RoomAssignmentRequest request) {
 		return assignmentService.updateAssignment(id, request);

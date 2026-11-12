@@ -89,7 +89,7 @@ public class Person {
         @Column(nullable = false, length = 32)
         private PersonRole role;
 
-        /** Lazy-loaded with @BatchSize(50) to avoid N+1 on paginated queries. */
+        /** Lazy-loaded with @BatchSize(100) to avoid N+1 on paginated queries. */
         @Builder.Default
         @ElementCollection(fetch = FetchType.LAZY)
         @CollectionTable(
@@ -99,7 +99,7 @@ public class Person {
         )
         @Column(name = "available_day", nullable = false, length = 16)
         @Enumerated(EnumType.STRING)
-        @BatchSize(size = 50)
+        @BatchSize(size = 100)
         private Set<WeekDay> availableDays = new LinkedHashSet<>();
 
         @Builder.Default
@@ -134,7 +134,7 @@ public class Person {
                 indexes = @Index(name = "idx_person_subject_codes_person_id", columnList = "person_id")
         )
         @Column(name = "subject_code", nullable = false, length = 40)
-        @BatchSize(size = 50)
+        @BatchSize(size = 100)
         private Set<String> subjectCodes = new LinkedHashSet<>();
 
 

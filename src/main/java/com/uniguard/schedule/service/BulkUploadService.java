@@ -40,6 +40,7 @@ import com.uniguard.schedule.repository.RoomRepository;
 import com.uniguard.schedule.util.DuplicateResolverUtil;
 import com.uniguard.schedule.util.ExcelParserUtil;
 import com.uniguard.schedule.util.NameNormalizationUtil;
+import com.uniguard.schedule.util.RoomNames;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -144,7 +145,8 @@ public class BulkUploadService {
 				values.getString(2),
 				values.getString(3),
 				values.getString(4),
-				values.getString(5)
+				values.getString(5),
+				values.getString(6)
 			)
 		);
 		Map<String, RoomCategory> roomTypes = roomCategoryService.byNormalizedName();
@@ -194,10 +196,10 @@ public class BulkUploadService {
 	public byte[] createRoomsTemplate() {
 		return createWorkbook(
 			"Rooms",
-			List.of("Name", "Capacity (optional)", "Size (optional)", "Min Invigilators (optional)", "Hall Gender (optional)", "Room Type (optional)"),
+			List.of("Name", "Capacity (optional)", "Size (optional)", "Min Invigilators (optional)", "Hall Gender (optional)", "Room Type (optional)", "Building (optional)"),
 			List.of(
-				List.of("Hall A", "80", "LARGE", "4", "MIXED", RoomCategoryService.CLASSROOM),
-				List.of("Lab 2", "30", "MEDIUM", "2", "FEMALE", RoomCategoryService.LAB)
+				List.of("H101", "80", "LARGE", "4", "MIXED", RoomCategoryService.CLASSROOM, "H"),
+				List.of("Lab 2", "30", "MEDIUM", "2", "FEMALE", RoomCategoryService.LAB, "Main")
 			),
 			sheet -> {
 				addDropdownValidation(sheet, 1, 5000, 2, 2, enumNames(RoomType.values()));
@@ -340,7 +342,8 @@ public class BulkUploadService {
 		}
 
 		return ValidationService.RowValidationResult.success(
-			new RoomImportCommand(name, capacity, roomType.orElse(DEFAULT_ROOM_TYPE), minInvigilators, hallGender, category)
+			new RoomImportCommand(name, capacity, roomType.orElse(DEFAULT_ROOM_TYPE), minInvigilators, hallGender, category,
+				NameNormalizationUtil.normalizeWhitespace(source.building()))
 		);
 	}
 
@@ -513,6 +516,8 @@ public class BulkUploadService {
 		room.setHallGender(command.hallGender());
 		room.setActive(true);
 		room.setCategory(command.category() != null ? command.category() : roomCategoryService.guessFor(resolvedName));
+		String building = command.building() == null || command.building().isBlank() ? RoomNames.guessBuilding(resolvedName) : command.building();
+		room.setBuilding(building == null ? "" : building.length() > 60 ? building.substring(0, 60) : building);
 		return room;
 	}
 
@@ -625,10 +630,10 @@ public class BulkUploadService {
 	                                   Gender gender, Set<String> subjectCodes) {
 	}
 
-	private record RoomImportSource(String name, String capacity, String type, String minInvigilators, String hallGender, String roomType) {
+	private record RoomImportSource(String name, String capacity, String type, String minInvigilators, String hallGender, String roomType, String building) {
 	}
 
-	private record RoomImportCommand(String name, int capacity, RoomType type, int minInvigilators, HallGender hallGender, RoomCategory category) {
+	private record RoomImportCommand(String name, int capacity, RoomType type, int minInvigilators, HallGender hallGender, RoomCategory category, String building) {
 	}
 
 	private record SavePlan<TEntity>(

@@ -154,4 +154,37 @@ class RoomAllocatorTest {
 			assertThat(new HashSet<>(chosen)).hasSize(chosen.size()); // no room twice
 		}
 	}
+
+	@Test
+	void aSplitExamStaysInOneBuildingWhenOneBuildingCanSeatIt() {
+		var rooms = List.of(
+			new RoomAllocator.RoomOption<>("A1", "A101", 70, "A"),
+			new RoomAllocator.RoomOption<>("A2", "A102", 70, "A"),
+			new RoomAllocator.RoomOption<>("B1", "B201", 50, "B"));
+		// Across buildings 70 + 50 would be exact; one building (70 + 70) wins.
+		var result = RoomAllocator.allocate(List.of(new RoomAllocator.Exam("x", 120)), rooms);
+		assertThat(result.get(0).rooms()).extracting(seating -> seating.room().id()).containsExactly("A1", "A2");
+	}
+
+	@Test
+	void oneBuildingNeverCostsOtherStudentsTheirSeat() {
+		var rooms = List.of(
+			new RoomAllocator.RoomOption<>("A1", "A101", 70, "A"),
+			new RoomAllocator.RoomOption<>("A2", "A102", 70, "A"),
+			new RoomAllocator.RoomOption<>("B1", "B201", 50, "B"),
+			new RoomAllocator.RoomOption<>("B2", "B202", 60, "B"));
+		// 250 seats for 130 + 120 students: no seat to spare. Building A for the 130 exam (70 + 70) would leave only
+		// 110 seats for the 120 exam, so the exact rooms across buildings are kept and everyone is seated.
+		var result = RoomAllocator.allocate(List.of(new RoomAllocator.Exam("x", 130), new RoomAllocator.Exam("y", 120)), rooms);
+		assertThat(result.get(0).unplaced() + result.get(1).unplaced()).isZero();
+		assertThat(result.get(0).seats()).isEqualTo(130);
+	}
+
+	@Test
+	void whenNoBuildingIsBigEnoughTheExamSpansBuildings() {
+		var rooms = List.of(new RoomAllocator.RoomOption<>("A1", "A101", 50, "A"), new RoomAllocator.RoomOption<>("B1", "B201", 50, "B"));
+		var result = RoomAllocator.allocate(List.of(new RoomAllocator.Exam("x", 100)), rooms);
+		assertThat(result.get(0).unplaced()).isZero();
+		assertThat(result.get(0).rooms()).hasSize(2);
+	}
 }

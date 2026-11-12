@@ -9,8 +9,8 @@ import com.uniguard.schedule.entity.AdminUser;
 import com.uniguard.schedule.entity.University;
 import com.uniguard.schedule.repository.AdminUserRepository;
 import com.uniguard.schedule.repository.UniversityRepository;
-import com.uniguard.schedule.service.SessionService;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -24,12 +24,10 @@ import java.util.UUID;
 public class AdminUserDetailsService implements UserDetailsService {
 
 	private final AdminUserRepository adminUserRepository;
-	private final SessionService sessionService;
 	private final UniversityRepository universityRepository;
 
-	public AdminUserDetailsService(AdminUserRepository adminUserRepository, SessionService sessionService, UniversityRepository universityRepository) {
+	public AdminUserDetailsService(AdminUserRepository adminUserRepository, UniversityRepository universityRepository) {
 		this.adminUserRepository = adminUserRepository;
-		this.sessionService = sessionService;
 		this.universityRepository = universityRepository;
 	}
 
@@ -47,6 +45,14 @@ public class AdminUserDetailsService implements UserDetailsService {
 		}
 		return user.getRole() != com.uniguard.schedule.entity.enums.AdminRole.SUPER_ADMIN
 			&& universityRepository.findById(user.getUniversityId()).map(University::isActive).orElse(false);
+	}
+
+	/** Same rule, when the university's state is already known (loaded together with the user). */
+	private static boolean universityActive(AdminUser user, boolean universityIsActive) {
+		if (user.getUniversityId() == null) {
+			return user.getRole() == com.uniguard.schedule.entity.enums.AdminRole.SUPER_ADMIN;
+		}
+		return user.getRole() != com.uniguard.schedule.entity.enums.AdminRole.SUPER_ADMIN && universityIsActive;
 	}
 
 	/**
@@ -75,18 +81,25 @@ public class AdminUserDetailsService implements UserDetailsService {
 	 * or when its session (device) was logged out.
 	 */
 	public AppUserPrincipal loadForToken(String email, Integer tokenVersion, UUID sessionId) {
-		AdminUser user = adminUserRepository.findByEmailIgnoreCase(email)
-			.orElseThrow(() -> new UsernameNotFoundException("No account found for email: " + email));
+		// One round trip for the user, the session and the university (this runs on every API request).
+		List<Object[]> rows = sessionId == null ? List.of() : adminUserRepository.findForRequest(email, sessionId, java.time.Instant.now());
+		if (rows.isEmpty()) {
+			throw new UsernameNotFoundException(sessionId == null ? "Session has ended" : "No account found for email: " + email);
+		}
+		Object[] row = rows.get(0);
+		AdminUser user = (AdminUser) row[0];
+		boolean sessionOpen = ((Number) row[1]).longValue() > 0;
+		Boolean universityActive = (Boolean) row[2];
 		if (tokenVersion == null || tokenVersion != user.getTokenVersion()) {
 			throw new UsernameNotFoundException("Token has been revoked");
 		}
 		if (!user.isEnabled()) {
 			throw new UsernameNotFoundException("Account is disabled");
 		}
-		if (!sessionService.isActive(sessionId, user.getId())) {
+		if (!sessionOpen) {
 			throw new UsernameNotFoundException("Session has ended");
 		}
-		if (!universityActive(user)) {
+		if (!universityActive(user, Boolean.TRUE.equals(universityActive))) {
 			throw new UsernameNotFoundException("University is not active");
 		}
 		if (user.getPasswordHash() == null || user.getPasswordHash().isBlank()) {

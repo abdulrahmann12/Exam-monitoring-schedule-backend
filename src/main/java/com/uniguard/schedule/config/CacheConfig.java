@@ -19,10 +19,13 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Named caches:
  * <ul>
- *   <li>{@code userDetails}  — Admin user lookup results. TTL 5 min, max 50 entries.
- *                              Eliminates a DB round-trip on every authenticated request.</li>
- *   <li>{@code dashboard}    — Aggregated dashboard stats. TTL 60 sec, max 1 entry.
- *                              Prevents 4 serial COUNT queries on every dashboard load.</li>
+ *   <li>{@code dashboard}    — Aggregated dashboard stats per university + exam period. TTL 60 sec.
+ *                              Cleared after every successful change ({@link DashboardCacheWebConfig}).</li>
+ *   <li>{@code settings}     — Each university's settings. TTL 5 min, cleared when they are saved.</li>
+ * </ul>
+ * <p>The per-request sign-in check is NOT cached (logout, disabling and switching a university off must
+ * work at once); it is one database query instead (AdminUserRepository.findForRequest).
+ * <ul>
  * </ul>
  *
  * <p><strong>NOTE:</strong> This is a single-node cache. For multi-instance deployments,
@@ -32,9 +35,6 @@ import java.util.concurrent.TimeUnit;
 @EnableCaching
 public class CacheConfig {
 
-    /** Cache name for admin user details (AdminUserDetailsService). */
-    public static final String CACHE_USER_DETAILS = "userDetails";
-
     /** Cache name for dashboard summary aggregates (DashboardService). */
     public static final String CACHE_DASHBOARD = "dashboard";
 
@@ -43,35 +43,26 @@ public class CacheConfig {
 
     @Bean
     public CacheManager cacheManager() {
-        // User details: TTL 5 minutes, small max size (admin users are few)
-        CaffeineCache userDetailsCache = new CaffeineCache(
-            CACHE_USER_DETAILS,
-            Caffeine.newBuilder()
-                .expireAfterWrite(5, TimeUnit.MINUTES)
-                .maximumSize(50)
-                .build()
-        );
-
         // Dashboard: TTL 60 seconds, one entry per schedule group
         CaffeineCache dashboardCache = new CaffeineCache(
             CACHE_DASHBOARD,
             Caffeine.newBuilder()
                 .expireAfterWrite(60, TimeUnit.SECONDS)
-                .maximumSize(32)
+                .maximumSize(500)
                 .build()
         );
 
-        // Settings: TTL 5 minutes, single-entry (one global settings object)
+        // Settings: TTL 5 minutes, one entry per university
         CaffeineCache settingsCache = new CaffeineCache(
             CACHE_SETTINGS,
             Caffeine.newBuilder()
                 .expireAfterWrite(5, TimeUnit.MINUTES)
-                .maximumSize(1)
+                .maximumSize(500)
                 .build()
         );
 
         SimpleCacheManager manager = new SimpleCacheManager();
-        manager.setCaches(List.of(userDetailsCache, dashboardCache, settingsCache));
+        manager.setCaches(List.of(dashboardCache, settingsCache));
         return manager;
     }
 }

@@ -19,6 +19,8 @@ public record RoomResponse(
 	String roomCategoryName,
 	/** true = special type (lab, studio): only for exams that ask for it. */
 	boolean roomCategorySpecial,
+	/** Building, or null when not known. */
+	String building,
 	Instant createdAt,
 	Instant updatedAt
 ) {

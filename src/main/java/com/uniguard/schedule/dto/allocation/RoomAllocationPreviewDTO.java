@@ -18,6 +18,7 @@ import java.util.UUID;
  * @param warnings        things to check (e.g. not enough rooms, day name not matching the date)
  * @param timeSlotsToCreate time slots that will be created on confirm (no slot has these times yet)
  * @param columnsRecognised which column of the file was read as what
+ * @param booked          rooms already booked outside this plan on the plan's days (room view: no drop there)
  */
 public record RoomAllocationPreviewDTO(
 	int exams,
@@ -30,8 +31,13 @@ public record RoomAllocationPreviewDTO(
 	List<Sitting> sittings,
 	List<String> warnings,
 	List<String> timeSlotsToCreate,
-	List<String> columnsRecognised
+	List<String> columnsRecognised,
+	List<Booked> booked
 ) {
+
+	/** A room already booked (saved exam room of any exam period) at that date and time. */
+	public record Booked(LocalDate date, String time, UUID roomId, String label) {
+	}
 
 	/**
 	 * @param timeSlotId null when the time slot does not exist yet
@@ -45,11 +51,13 @@ public record RoomAllocationPreviewDTO(
 	 * @param roomType   the room type the exam asked for; null = a normal room
 	 * @param freeOfType free rooms of that type at that time (null for normal exams)
 	 * @param timeChosen true = the file left the time slot empty and Uni-Guard chose it
+	 * @param edited     true = the user changed this exam's time or rooms on the page
 	 * @param gender     "Male" / "Female"; null = a mixed exam (any hall)
 	 * @param mixedHalls true = a Male/Female exam that needed Mixed halls (not enough halls of its gender)
+	 * @param hints      how to fix a problem, worked out from the university's own rooms and times (empty when fine)
 	 */
-	public record Exam(int row, String subjectName, String subjectCode, int students, String roomType, Integer freeOfType, boolean timeChosen,
-		String gender, boolean mixedHalls, int unplaced, List<Room> rooms) {
+	public record Exam(int row, String subjectName, String subjectCode, int students, String roomType, Integer freeOfType, boolean timeChosen, boolean edited,
+		String gender, boolean mixedHalls, int unplaced, List<Room> rooms, List<String> hints) {
 	}
 
 	public record Room(UUID roomId, String name, int capacity, int students) {

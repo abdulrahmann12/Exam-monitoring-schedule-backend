@@ -97,6 +97,18 @@ public class Room {
 	@JoinColumn(name = "room_category_id")
 	private RoomCategory category;
 
+	/**
+	 * The building (V20), e.g. "H" for H101. null = not set yet (guessed from the name at start-up);
+	 * "" = the administrator chose "no building".
+	 */
+	@Column(length = 60)
+	private String building;
+
+	/** Building for comparing: upper case, "" when not known. */
+	public String buildingKey() {
+		return building == null ? "" : building.trim().toUpperCase(java.util.Locale.ROOT);
+	}
+
 	/** True when the room has a special type (lab, studio, ...). */
 	public boolean isSpecial() {
 		return category != null && category.isSpecial();

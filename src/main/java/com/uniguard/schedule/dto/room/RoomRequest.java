@@ -29,10 +29,14 @@ public record RoomRequest(
 	java.util.UUID roomCategoryId,
 
 	/** Optional. false = out of service. Empty: in service for a new room, unchanged on edit. */
-	Boolean active
+	Boolean active,
+
+	/** Optional building ("H"). Left out: guessed from the name (new room) or unchanged (edit). "" = no building. */
+	@Size(max = 60, message = "Building must be at most 60 characters")
+	String building
 ) {
 	/** The four-field form used before labs and out-of-service existed. */
 	public RoomRequest(String name, int capacity, RoomType type, int minInvigilators, HallGender hallGender) {
-		this(name, capacity, type, minInvigilators, hallGender, null, null);
+		this(name, capacity, type, minInvigilators, hallGender, null, null, null);
 	}
 }

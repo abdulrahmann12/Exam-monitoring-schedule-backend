@@ -61,6 +61,7 @@ import java.util.UUID;
                 @Index(name = "idx_ra_slot_date_chief", columnList = "time_slot_id, exam_date, chief_invigilator_id"),
                 @Index(name = "idx_ra_date_slot", columnList = "exam_date, time_slot_id"),
                 @Index(name = "idx_ra_schedule_group", columnList = "schedule_group_id"),
+                @Index(name = "idx_ra_group_date_slot", columnList = "schedule_group_id, exam_date, time_slot_id"),
                 @Index(name = "idx_ra_group_slot_date_chief",
                         columnList = "schedule_group_id, time_slot_id, exam_date, chief_invigilator_id")
         }
@@ -109,6 +110,10 @@ public class RoomAssignment {
         @Column(length = 40)
         private String subjectCode;
 
+        /** The Room Allocation save that created this exam room (V19); null when made another way. Used by Undo. */
+        @Column(name = "allocation_batch_id")
+        private UUID allocationBatchId;
+
         /** Students sitting this exam in this room (optional). Drives the required invigilator count. */
         @Column(name = "student_count")
         private Integer studentCount;
@@ -136,7 +141,7 @@ public class RoomAssignment {
         /** Invigilators for this room. Batched to avoid N+1 outside EntityGraph paths. */
         @ToString.Exclude
         @Builder.Default
-        @BatchSize(size = 25)
+        @BatchSize(size = 100)
         @OneToMany(mappedBy = "roomAssignment", cascade = CascadeType.ALL, orphanRemoval = true)
         @OrderColumn(name = "position_index")
         private List<InvigilatorAssignment> invigilatorAssignments = new ArrayList<>();

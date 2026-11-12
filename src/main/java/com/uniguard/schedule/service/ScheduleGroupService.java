@@ -54,6 +54,7 @@ public class ScheduleGroupService {
 	private final ScheduleGroupSupport scheduleGroupSupport;
 	private final DemoModeService demoModeService;
 	private final CacheManager cacheManager;
+	private final com.uniguard.schedule.repository.RoomAllocationBatchRepository allocationBatchRepository;
 
 	public PageResponse<ScheduleGroupResponse> getScheduleGroups(String name, Boolean activeOnly, Pageable pageable) {
 		String namePrefix = (name != null && !name.isBlank()) ? name.trim() : null;
@@ -134,6 +135,9 @@ public class ScheduleGroupService {
 		decrementWorkload(assignments);
 		roomAssignmentRepository.deleteAll(assignments);
 		roomAssignmentRepository.flush();
+		// Saved room allocations of this period go too (the database does it on MySQL; not every database does).
+		allocationBatchRepository.deleteAll(allocationBatchRepository.findAllByScheduleGroupIdOrderByCreatedAtDesc(id));
+		allocationBatchRepository.flush();
 		scheduleGroupRepository.delete(group);
 
 		if (wasDefault) {

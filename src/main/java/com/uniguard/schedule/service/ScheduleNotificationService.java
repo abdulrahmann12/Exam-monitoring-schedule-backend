@@ -3,11 +3,9 @@ package com.uniguard.schedule.service;
 import com.lowagie.text.Document;
 import com.lowagie.text.Element;
 import com.lowagie.text.Font;
-import com.lowagie.text.FontFactory;
 import com.lowagie.text.PageSize;
 import com.lowagie.text.Paragraph;
 import com.lowagie.text.Phrase;
-import com.lowagie.text.pdf.BaseFont;
 import com.lowagie.text.pdf.PdfPCell;
 import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
@@ -316,25 +314,7 @@ public class ScheduleNotificationService {
 	}
 
 	private static Font resolveFont(float size, int style, Color color) {
-		String windir = System.getenv("WINDIR");
-		String[] candidates = {
-			windir != null ? windir + "/Fonts/arial.ttf" : null,
-			"C:/Windows/Fonts/arial.ttf",
-			"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-			"/System/Library/Fonts/Supplemental/Arial.ttf"
-		};
-		for (String path : candidates) {
-			if (path == null) {
-				continue;
-			}
-			try {
-				BaseFont baseFont = BaseFont.createFont(path, BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
-				return new Font(baseFont, size, style, color);
-			} catch (Exception ignored) {
-				// Try the next installed Unicode font.
-			}
-		}
-		return FontFactory.getFont(FontFactory.HELVETICA, size, style, color);
+		return com.uniguard.schedule.util.PdfFonts.resolve(size, style, color);
 	}
 
 	private static String buildPdfFilename(ScheduleGroup group, Person person) {

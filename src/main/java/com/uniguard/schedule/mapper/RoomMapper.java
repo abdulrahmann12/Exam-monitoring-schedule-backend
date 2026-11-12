@@ -14,14 +14,17 @@ public interface RoomMapper {
 	@Mapping(target = "roomCategoryId", expression = "java(room.getCategory() == null ? null : room.getCategory().getId())")
 	@Mapping(target = "roomCategoryName", expression = "java(room.getCategory() == null ? null : room.getCategory().getName())")
 	@Mapping(target = "roomCategorySpecial", expression = "java(room.isSpecial())")
+	@Mapping(target = "building", expression = "java(room.buildingKey().isEmpty() ? null : room.getBuilding().trim())")
 	RoomResponse toResponse(Room room);
 
 	/** The room type and {@code active} are optional in the request: RoomService decides them. */
 	@Mapping(target = "category", ignore = true)
 	@Mapping(target = "active", ignore = true)
+	@Mapping(target = "building", ignore = true)
 	Room toEntity(RoomRequest request);
 
 	@Mapping(target = "category", ignore = true)
 	@Mapping(target = "active", ignore = true)
+	@Mapping(target = "building", ignore = true)
 	void updateEntity(RoomRequest request, @MappingTarget Room room);
 }
