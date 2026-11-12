@@ -142,6 +142,47 @@ class MultiUniversityIsolationTest {
 	}
 
 	@Test
+	void anotherUniversitysRoomAllocationsCannotBeReachedOrUsed() throws Exception {
+		String roomA = id(created(post("/api/rooms"), a, Map.of("name", "Isolation Alloc Hall", "capacity", 200, "type", "LARGE",
+			"minInvigilators", 1, "hallGender", "MIXED")));
+		String groupA = id(created(post("/api/schedule-groups"), a, Map.of("name", "Isolation Alloc A")));
+		String csv = "Date,Time Slot,Code,Students\n2031-03-03,09:00 - 11:00,ISO1,20\n";
+		var save = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/room-allocation/save")
+			.file(new org.springframework.mock.web.MockMultipartFile("file", "a.csv", "text/csv", csv.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+			.param("scheduleGroupId", groupA);
+		String batchId = objectMapper.readTree(body(mockMvc.perform(authed(save, a)).andExpect(status().isOk()))).get("batchId").asText();
+
+		// University B guesses A's ids: every answer is "not found", as if they did not exist.
+		mockMvc.perform(authed(get("/api/room-allocation/batches/" + batchId + "/door-sheets"), b)).andExpect(status().isNotFound());
+		mockMvc.perform(authed(get("/api/room-allocation/batches/" + batchId + "/export"), b)).andExpect(status().isNotFound());
+		mockMvc.perform(authed(post("/api/room-allocation/batches/" + batchId + "/undo"), b)).andExpect(status().isNotFound());
+		mockMvc.perform(authed(get("/api/room-allocation/batches?scheduleGroupId=" + groupA), b)).andExpect(status().isNotFound());
+		mockMvc.perform(authed(get("/api/assignments/busy-elsewhere?scheduleGroupId=" + groupA + "&date=2031-03-03&slotId=" + UUID.randomUUID()), b))
+			.andExpect(status().isNotFound());
+		mockMvc.perform(authed(post("/api/room-allocation/staff"), b).contentType(MediaType.APPLICATION_JSON)
+				.content(json(Map.of("scheduleGroupId", groupA, "assignmentIds", new String[] {UUID.randomUUID().toString()}))))
+			.andExpect(status().isNotFound());
+
+		// B cannot pin A's room into its own plan: the room is simply not there for B (B uses its own room).
+		String roomB = id(created(post("/api/rooms"), b, Map.of("name", "Isolation B Room", "capacity", 50, "type", "MEDIUM",
+			"minInvigilators", 1, "hallGender", "MIXED")));
+		String groupB = objectMapper.readTree(body(mockMvc.perform(authed(get("/api/schedule-groups?size=100"), b)))).get("content").get(0).get("id").asText();
+		var preview = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/room-allocation/preview")
+			.file(new org.springframework.mock.web.MockMultipartFile("file", "b.csv", "text/csv",
+				"Date,Time Slot,Code,Students\n2031-03-03,09:00 - 11:00,ISOB,20\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+			.param("scheduleGroupId", groupB)
+			.param("adjustments", "{\"anchors\":{\"2\":\"" + roomA + "\"},\"times\":{\"2\":\"09:00-11:00\"}}");
+		String planB = body(mockMvc.perform(authed(preview, b)).andExpect(status().isOk()));
+		assertThat(planB).doesNotContain(roomA).doesNotContain("Isolation Alloc Hall").contains("Isolation B Room");
+		mockMvc.perform(authed(delete("/api/rooms/" + roomB), b)).andExpect(status().isNoContent());
+
+		// Still A's: A can undo it.
+		mockMvc.perform(authed(post("/api/room-allocation/batches/" + batchId + "/undo"), a)).andExpect(status().isOk());
+		mockMvc.perform(authed(delete("/api/schedule-groups/" + groupA), a)).andExpect(status().isNoContent());
+		mockMvc.perform(authed(delete("/api/rooms/" + roomA), a)).andExpect(status().isNoContent());
+	}
+
+	@Test
 	void namesOnlyHaveToBeUniqueWithinOneUniversity() throws Exception {
 		String inA = id(created(post("/api/rooms"), a, room("Isolation Same Name")));
 		String inB = id(created(post("/api/rooms"), b, room("Isolation Same Name")));
