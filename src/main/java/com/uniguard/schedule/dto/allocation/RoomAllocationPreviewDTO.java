@@ -32,7 +32,9 @@ public record RoomAllocationPreviewDTO(
 	List<String> warnings,
 	List<String> timeSlotsToCreate,
 	List<String> columnsRecognised,
-	List<Booked> booked
+	List<Booked> booked,
+	/** Settings → exam seating: the % of each room's seats used (room seats in this plan are already exam seats). */
+	int examFillPercent
 ) {
 
 	/** A room already booked (saved exam room of any exam period) at that date and time. */
@@ -57,7 +59,7 @@ public record RoomAllocationPreviewDTO(
 	 * @param hints      how to fix a problem, worked out from the university's own rooms and times (empty when fine)
 	 */
 	public record Exam(int row, String subjectName, String subjectCode, int students, String roomType, Integer freeOfType, boolean timeChosen, boolean edited,
-		String gender, boolean mixedHalls, int unplaced, List<Room> rooms, List<String> hints) {
+		String gender, boolean mixedHalls, int unplaced, List<Room> rooms, List<String> hints, int durationMinutes) {
 	}
 
 	public record Room(UUID roomId, String name, int capacity, int students) {

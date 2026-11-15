@@ -94,6 +94,7 @@ public class SettingsService {
 			response.minRestMinutes(),
 			response.studentsPerInvigilator(),
 			response.chiefMaxParallelRooms(),
+			response.examFillPercent(),
 			response.documentSignatures()
 		);
 	}

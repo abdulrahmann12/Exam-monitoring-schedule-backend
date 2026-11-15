@@ -109,7 +109,7 @@ class RoomAllocationTest {
 		assertThat(result.get("students").asInt()).isEqualTo(275);
 		assertThat(result.get("studentsUnplaced").asInt()).isZero();
 		assertThat(result.get("sittings")).hasSize(2);
-		assertThat(result.get("timeSlotsToCreate").get(0).asText()).isEqualTo("Exam 09:00–12:00");
+		assertThat(result.get("timeSlotsToCreate")).isEmpty(); // exams only use time slots that already exist
 		assertThat(result.get("columnsRecognised").toString()).contains("Number of Students → students").contains("Day → day");
 
 		JsonNode first = result.get("sittings").get(0);
@@ -296,10 +296,14 @@ class RoomAllocationTest {
 			var sheet = workbook.getSheetAt(0);
 			assertThat(sheet.getRow(0).getCell(2).getStringCellValue()).isEqualTo("Time Slot");
 			assertThat(sheet.getRow(0).getCell(6).getStringCellValue()).isEqualTo("Room Type");
+			assertThat(sheet.getRow(0).getCell(8).getStringCellValue()).isEqualTo("Duration (minutes)");
+			assertThat(sheet.getRow(1).getCell(8).getNumericCellValue()).isEqualTo(120); // the example matches its 2-hour time slot
 			var lists = workbook.getSheet("Lists");
 			assertThat(List.of(lists.getRow(1).getCell(0).getStringCellValue(), lists.getRow(2).getCell(0).getStringCellValue()))
 				.containsExactly("09:00 - 11:00", "12:00 - 14:00"); // in time order
 			assertThat(lists.getRow(4).getCell(1).getStringCellValue()).isEqualTo("Computer Lab"); // the room types
+			assertThat(lists.getRow(1).getCell(2).getNumericCellValue()).isEqualTo(5); // durations 5, 10, … 300 minutes
+			assertThat(lists.getRow(60).getCell(2).getNumericCellValue()).isEqualTo(300);
 			assertThat(sheet.getDataValidations()).anyMatch(v -> v.getValidationConstraint().getFormula1() != null
 				&& v.getValidationConstraint().getFormula1().contains("Lists"));
 
@@ -312,6 +316,7 @@ class RoomAllocationTest {
 			row.createCell(3).setCellValue("Statistics");
 			row.createCell(4).setCellValue("STAT200");
 			row.createCell(5).setCellValue(90);
+			row.createCell(8).setCellValue(120); // picked from the Duration dropdown
 			var out = new java.io.ByteArrayOutputStream();
 			workbook.write(out);
 
@@ -414,7 +419,7 @@ class RoomAllocationTest {
 			2027-08-01,09:00 - 12:00,Space,BIG9,1000
 			""";
 		JsonNode saved = ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/room-allocation/save")
-			.file(new MockMultipartFile("file", "exams.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("exams.csv", csv))
 			.param("scheduleGroupId", groupId)
 			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
 		// 150 → Hall 100 + Room 50, 35 → Room 40, the 1000-student exam gets what is left (Room 60) and is incomplete.
@@ -422,7 +427,7 @@ class RoomAllocationTest {
 		assertThat(saved.get("examsSaved").asInt()).isEqualTo(3);
 		assertThat(saved.get("examsIncomplete").asInt()).isEqualTo(1);
 		assertThat(saved.get("studentsUnplaced").asInt()).isEqualTo(1000 - 60);
-		assertThat(saved.get("timeSlotsCreated").get(0).asText()).isEqualTo("Exam 09:00–12:00");
+		assertThat(saved.get("timeSlotsCreated")).isEmpty(); // the time slots were added first (Time Slots page)
 		assertThat(saved.get("firstDate").asText()).isEqualTo("2027-08-01");
 
 		TenantContext.runAs(university, () -> {
@@ -512,7 +517,7 @@ class RoomAllocationTest {
 
 		// Saving keeps the chosen times.
 		ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/room-allocation/save")
-			.file(new MockMultipartFile("file", "exams.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("exams.csv", csv))
 			.param("scheduleGroupId", groupId)
 			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
 		TenantContext.runAs(university, () -> {
@@ -565,9 +570,9 @@ class RoomAllocationTest {
 	}
 
 	@Test
-	void emptyTimeSlotNeedsTimeSlotsToChooseFrom() throws Exception {
-		assertThat(preview("Date,Code,Students\n2027-09-05,X,20\n").andExpect(status().isBadRequest())
-			.andReturn().getResponse().getContentAsString()).contains("no time slots to choose from");
+	void emptyTimeSlotNeedsATimeSlotOfThatLength() throws Exception {
+		assertThat(preview("Date,Code,Students,Duration\n2027-09-05,X,20,120\n").andExpect(status().isBadRequest())
+			.andReturn().getResponse().getContentAsString()).contains("No time slot lasts 2 h. Add one on the Time Slots page");
 	}
 
 	// ── Hall gender (Male / Female exams; empty = any hall) ──
@@ -687,7 +692,7 @@ class RoomAllocationTest {
 		staff(3, 8);
 		String csv = "Date,Time Slot,Code,Students\n2027-11-01,09:00 - 12:00,UNDO1,150\n2027-11-01,09:00 - 12:00,UNDO2,35\n";
 		var save = MockMvcRequestBuilders.multipart("/api/room-allocation/save")
-			.file(new MockMultipartFile("file", "finals-nov.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("finals-nov.csv", csv))
 			.param("scheduleGroupId", groupId);
 		JsonNode saved = ok(mockMvc.perform(save.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
 		String batchId = saved.get("batchId").asText();
@@ -725,7 +730,7 @@ class RoomAllocationTest {
 
 		// The rooms are free again: the same file can be saved again.
 		JsonNode again = ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/room-allocation/save")
-			.file(new MockMultipartFile("file", "finals-nov.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("finals-nov.csv", csv))
 			.param("scheduleGroupId", groupId)
 			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
 		assertThat(again.get("roomAssignmentsCreated").asInt()).isEqualTo(3);
@@ -774,7 +779,7 @@ class RoomAllocationTest {
 		json(post("/api/people"), Map.of("name", "Monday Invigilator", "department", "Exams", "role", "INVIGILATOR", "availableDays", List.of("MON")));
 		String csv = "Date,Time Slot,Code,Students\n2027-12-05,09:00 - 12:00,SUN1,40\n"; // 5 Dec 2027 is a Sunday
 		JsonNode saved = ok(mockMvc.perform(MockMvcRequestBuilders.multipart("/api/room-allocation/save")
-			.file(new MockMultipartFile("file", "sunday.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("sunday.csv", csv))
 			.param("scheduleGroupId", groupId)
 			.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
 		List<String> ids = new ArrayList<>();
@@ -875,7 +880,7 @@ class RoomAllocationTest {
 
 	private ResultActions preview(String csv, String adjustments, String endpoint) throws Exception {
 		var request = MockMvcRequestBuilders.multipart("/api/room-allocation/" + endpoint)
-			.file(new MockMultipartFile("file", "exams.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("exams.csv", csv))
 			.param("scheduleGroupId", groupId)
 			.param("adjustments", adjustments);
 		return mockMvc.perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest"));
@@ -1025,7 +1030,7 @@ class RoomAllocationTest {
 	void anExamPeriodWithSavedAllocationsCanBeDeleted() throws Exception {
 		String csv = "Date,Time Slot,Code,Students\n2028-06-01,09:00 - 11:00,GONE1,50\n";
 		var save = MockMvcRequestBuilders.multipart("/api/room-allocation/save")
-			.file(new MockMultipartFile("file", "gone.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("gone.csv", csv))
 			.param("scheduleGroupId", groupId);
 		ok(mockMvc.perform(save.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
 		assertThat(readJson(MockMvcRequestBuilders.get("/api/room-allocation/batches").param("scheduleGroupId", groupId))).hasSize(1);
@@ -1037,6 +1042,125 @@ class RoomAllocationTest {
 			.andExpect(status().isNotFound());
 	}
 
+	// ── Exam duration: every exam says how long it lasts; it only goes into a time slot of exactly that length ──
+
+	@Test
+	void examsOnlyGoIntoTimeSlotsOfTheirOwnLength() throws Exception {
+		twoSlots(); // 09:00–11:00 and 12:00–14:00 (2 h each)
+		json(post("/api/slots"), Map.of("label", "Short morning", "startTime", "09:00", "endTime", "10:30", "sortOrder", 3));
+		String csv = "Date,Time Slot,Code,Students,Duration\n2028-05-02,,AUTO90,30,90\n2028-05-02,,AUTO120,30,2:00\n2028-05-02,12:00 - 14:00,FIXED,30,120 min\n";
+		JsonNode result = ok(preview(csv));
+		Map<String, String> timeOf = new java.util.HashMap<>();
+		for (JsonNode sitting : result.get("sittings")) {
+			for (JsonNode exam : sitting.get("exams")) {
+				timeOf.put(exam.get("subjectCode").asText(), sitting.get("time").asText());
+				assertThat(exam.get("durationMinutes").asInt()).isPositive();
+			}
+		}
+		assertThat(timeOf.get("AUTO90")).isEqualTo("09:00–10:30"); // the only 1 h 30 slot
+		assertThat(timeOf.get("AUTO120")).isIn("09:00–11:00", "12:00–14:00");
+		assertThat(timeOf.get("FIXED")).isEqualTo("12:00–14:00");
+		assertThat(exam(result, "AUTO90").get("durationMinutes").asInt()).isEqualTo(90);
+
+		// Every mistake is listed with its row, and nothing is planned.
+		String bad = "Date,Time Slot,Code,Students,Duration\n"
+			+ "2028-05-02,09:00 - 11:00,WRONGLEN,30,90\n"   // the slot is 2 h
+			+ "2028-05-02,10:00 - 11:00,NOSLOT,30,60\n"      // no such time slot
+			+ "2028-05-02,,NOLENGTH,30,45\n"                 // no 45-minute slot
+			+ "2028-05-02,,EMPTY,30,\n"                      // duration missing
+			+ "2028-05-02,,WORDS,30,soon\n"                  // not a duration
+			+ "2028-05-02,,HUGE,30,400\n";                   // more than 300 minutes
+		String errors = preview(bad).andExpect(status().isBadRequest()).andReturn().getResponse().getContentAsString();
+		assertThat(errors)
+			.contains("This exam lasts 1 h 30 min, but 09:00–11:00 is 2 h")
+			.contains("There is no time slot 10:00–11:00. Add it on the Time Slots page first")
+			.contains("No time slot lasts 45 min")
+			.contains("Duration is required")
+			.contains("Duration \\\"soon\\\" is not a duration")
+			.contains("Duration 6 h 40 min is not possible: choose 5 to 300 minutes");
+
+		// Men and women of one subject sit together, so they need the same duration.
+		String split = "Date,Time Slot,Code,Students,Gender,Duration\n2028-05-03,,NUR1,30,Male,90\n2028-05-03,,NUR1,30,Female,120\n";
+		assertThat(preview(split).andExpect(status().isBadRequest()).andReturn().getResponse().getContentAsString())
+			.contains("Row 2 has the same subject on the same day with a duration of 1 h 30 min");
+
+		// Moving an exam on the page to a slot of another length is refused by the server too.
+		assertThat(preview(csv, "{\"times\":{\"2\":\"09:00-11:00\"}}", "preview").andExpect(status().isBadRequest())
+			.andReturn().getResponse().getContentAsString()).contains("This exam lasts 1 h 30 min, but 09:00–11:00 is 2 h");
+		assertThat(preview(csv, "{\"times\":{\"3\":\"12:00-14:00\"}}", "preview").andExpect(status().isOk()));
+	}
+
+	@Test
+	void oneCourseMayBeHeldInSeveralSittingsOnOneDay() throws Exception {
+		twoSlots(); // 09:00–11:00 and 12:00–14:00
+		json(post("/api/slots"), Map.of("label", "Afternoon", "startTime", "15:00", "endTime", "17:00", "sortOrder", 3));
+		// Like SEU's Mathematics 0: three programmes, three rows, the rooms cannot hold everyone at once.
+		String csv = "Date,Code,Students,Duration\n2028-07-03,MATH0,190,120\n2028-07-03,MATH0,180,120\n2028-07-03,MATH0,170,120\n";
+		JsonNode result = ok(preview(csv));
+		assertThat(result.get("exams").asInt()).isEqualTo(3);
+		assertThat(result.get("studentsUnplaced").asInt()).isZero(); // 210 seats per time: each sitting needs its own time
+		List<String> times = new ArrayList<>();
+		for (JsonNode sitting : result.get("sittings")) {
+			for (JsonNode exam : sitting.get("exams")) {
+				times.add(sitting.get("time").asText());
+				assertThat(exam.get("timeChosen").asBoolean()).isTrue();
+			}
+		}
+		assertThat(times).containsExactlyInAnyOrder("09:00–11:00", "12:00–14:00", "15:00–17:00");
+
+		// The same course twice at the same written time is still one exam: it belongs in one row.
+		String twice = "Date,Time Slot,Code,Students,Duration\n2028-07-04,09:00 - 11:00,PHYS0,50,120\n2028-07-04,09:00 - 11:00,PHYS0,40,120\n";
+		assertThat(preview(twice).andExpect(status().isBadRequest()).andReturn().getResponse().getContentAsString())
+			.contains("This subject is already listed at the same date and time in row 2");
+	}
+
+	@Test
+	void examSeatingUsesOnlyPartOfEachRoom() throws Exception {
+		twoSlots();
+		// Settings → exam seating 70%: a 60-seat room takes 42 students, Hall 100 takes 70 (rooms keep their capacity).
+		var settings = (com.fasterxml.jackson.databind.node.ObjectNode) readJson(MockMvcRequestBuilders.get("/api/settings"));
+		assertThat(settings.get("examFillPercent").asInt()).isEqualTo(100); // default: every seat
+		settings.put("examFillPercent", 70);
+		assertThat(send(MockMvcRequestBuilders.put("/api/settings"), settings, admin)).isEqualTo(200);
+		settings.put("examFillPercent", 5);
+		assertThat(send(MockMvcRequestBuilders.put("/api/settings"), settings, admin)).isEqualTo(400); // at least 10%
+
+		JsonNode result = ok(preview("Date,Time Slot,Code,Students,Duration\n2028-08-01,09:00 - 11:00,FILL,112,120\n"));
+		assertThat(result.get("examFillPercent").asInt()).isEqualTo(70);
+		JsonNode exam = exam(result, "FILL");
+		assertThat(exam.get("unplaced").asInt()).isZero();
+		Map<String, Integer> seatsOf = new java.util.HashMap<>();
+		for (JsonNode room : exam.get("rooms")) {
+			seatsOf.put(room.get("name").asText(), room.get("capacity").asInt());
+			assertThat(room.get("students").asInt()).isLessThanOrEqualTo(room.get("capacity").asInt());
+		}
+		// Exam seats: Hall 100 → 70, Room 60 → 42, Room 50 → 35, Room 40 → 28. Fewest rooms for 112: 70 + 42.
+		assertThat(seatsOf).containsOnly(Map.entry("Hall 100", 70), Map.entry("Room 60", 42));
+		// The room itself still has its full capacity.
+		JsonNode rooms = readJson(MockMvcRequestBuilders.get("/api/rooms").param("size", "100"));
+		for (JsonNode room : rooms.get("content")) {
+			if (room.get("name").asText().equals("Hall 100")) {
+				assertThat(room.get("capacity").asInt()).isEqualTo(100);
+			}
+		}
+	}
+
+	@Test
+	void durationsAreReadInEveryCommonWay() {
+		assertThat(TimetableColumns.durationMinutes("90")).isEqualTo(90);
+		assertThat(TimetableColumns.durationMinutes("90.0")).isEqualTo(90); // Excel number cell
+		assertThat(TimetableColumns.durationMinutes("1:30")).isEqualTo(90);
+		assertThat(TimetableColumns.durationMinutes("01:30:00")).isEqualTo(90);
+		assertThat(TimetableColumns.durationMinutes("1h30")).isEqualTo(90);
+		assertThat(TimetableColumns.durationMinutes("1.5 h")).isEqualTo(90);
+		assertThat(TimetableColumns.durationMinutes("2 hours")).isEqualTo(120);
+		assertThat(TimetableColumns.durationMinutes("45 min")).isEqualTo(45);
+		assertThat(TimetableColumns.durationMinutes("soon")).isNull();
+		assertThat(TimetableColumns.formatMinutes(90)).isEqualTo("1 h 30 min");
+		assertThat(TimetableColumns.formatMinutes(120)).isEqualTo("2 h");
+		assertThat(TimetableColumns.formatMinutes(45)).isEqualTo("45 min");
+	}
+
 	// ── Door sheets and Excel export ──
 
 	@Test
@@ -1045,7 +1169,7 @@ class RoomAllocationTest {
 		String csv = "Date,Time Slot,Subject Name,Code,Students\n2028-03-01,09:00 - 12:00,Calculus,MATH101,150\n"
 			+ "2028-03-01,09:00 - 12:00,=HYPERLINK(\"x\"),EVIL1,35\n";
 		var save = MockMvcRequestBuilders.multipart("/api/room-allocation/save")
-			.file(new MockMultipartFile("file", "march.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("march.csv", csv))
 			.param("scheduleGroupId", groupId);
 		JsonNode saved = ok(mockMvc.perform(save.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest")));
 		String batchId = saved.get("batchId").asText();
@@ -1094,7 +1218,7 @@ class RoomAllocationTest {
 	@Test
 	void viewersCannotSaveRooms() throws Exception {
 		var request = MockMvcRequestBuilders.multipart("/api/room-allocation/save")
-			.file(new MockMultipartFile("file", "x.csv", "text/csv", "Date,Time Slot,Code,Students\n2027-01-10,09:00 - 12:00,X1,5\n".getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("x.csv", "Date,Time Slot,Code,Students\n2027-01-10,09:00 - 12:00,X1,5\n"))
 			.param("scheduleGroupId", groupId);
 		mockMvc.perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + viewer).header(CSRF, "XMLHttpRequest"))
 			.andExpect(status().isForbidden());
@@ -1104,7 +1228,7 @@ class RoomAllocationTest {
 	@Test
 	void viewersCannotUseIt() throws Exception {
 		var request = MockMvcRequestBuilders.multipart("/api/room-allocation/preview")
-			.file(new MockMultipartFile("file", "x.csv", "text/csv", "Date,Time Slot,Code,Students\n2027-01-10,09:00 - 12:00,X1,5\n".getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("x.csv", "Date,Time Slot,Code,Students\n2027-01-10,09:00 - 12:00,X1,5\n"))
 			.param("scheduleGroupId", groupId);
 		mockMvc.perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + viewer).header(CSRF, "XMLHttpRequest"))
 			.andExpect(status().isForbidden());
@@ -1152,7 +1276,7 @@ class RoomAllocationTest {
 
 	private ResultActions preview(String csv) throws Exception {
 		var request = MockMvcRequestBuilders.multipart("/api/room-allocation/preview")
-			.file(new MockMultipartFile("file", "exams.csv", "text/csv", csv.getBytes(StandardCharsets.UTF_8)))
+			.file(examFile("exams.csv", csv))
 			.param("scheduleGroupId", groupId);
 		return mockMvc.perform(request.header(HttpHeaders.AUTHORIZATION, "Bearer " + admin).header(CSRF, "XMLHttpRequest"));
 	}
@@ -1174,5 +1298,61 @@ class RoomAllocationTest {
 		List<String> names = new ArrayList<>();
 		exam.get("rooms").forEach(room -> names.add(room.get("name").asText()));
 		return names;
+	}
+	/** An exam list as a file, made valid for the duration rules (see {@link #withDuration}). */
+	private MockMultipartFile examFile(String name, String csv) throws Exception {
+		return new MockMultipartFile("file", name, "text/csv", withDuration(csv).getBytes(StandardCharsets.UTF_8));
+	}
+
+	/**
+	 * The exam lists in these tests were written before exams had a duration. This adds the Duration column (each
+	 * row's time slot length; rows without a time get the length of the existing time slots) and first creates the
+	 * time slots the file uses, as a user does on the Time Slots page. Lists that already have a Duration are kept.
+	 */
+	private String withDuration(String csv) throws Exception {
+		String[] lines = csv.split("\n");
+		List<String> header = List.of(lines[0].split(",", -1));
+		if (header.stream().anyMatch(column -> column.trim().toLowerCase(java.util.Locale.ROOT).startsWith("duration"))) {
+			return csv;
+		}
+		int time = header.indexOf("Time Slot");
+		int startColumn = header.indexOf("Start Time");
+		int endColumn = header.indexOf("End Time");
+		JsonNode slots = readJson(MockMvcRequestBuilders.get("/api/slots").param("size", "100"));
+		Set<String> existing = new java.util.HashSet<>();
+		Map<Integer, Integer> lengths = new java.util.HashMap<>();
+		for (JsonNode slot : slots.has("content") ? slots.get("content") : slots) {
+			String start = slot.get("startTime").asText().substring(0, 5);
+			String end = slot.get("endTime").asText().substring(0, 5);
+			existing.add(start + "-" + end);
+			lengths.merge(minutes(start, end), 1, Integer::sum);
+		}
+		StringBuilder out = new StringBuilder(lines[0]).append(",Duration\n");
+		for (int i = 1; i < lines.length; i++) {
+			if (lines[i].isBlank()) {
+				continue;
+			}
+			String[] cells = lines[i].split(",", -1);
+			String range = time >= 0 && time < cells.length ? cells[time].trim() : "";
+			if (startColumn >= 0 && endColumn >= 0 && !cells[startColumn].isBlank()) {
+				range = cells[startColumn].trim() + " - " + cells[endColumn].trim();
+			}
+			int duration;
+			if (range.isEmpty()) {
+				duration = lengths.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(120);
+			} else {
+				String[] parts = range.split("\\s*-\\s*");
+				duration = minutes(parts[0], parts[1]);
+				if (existing.add(parts[0] + "-" + parts[1])) {
+					json(post("/api/slots"), Map.of("label", "Exam " + range, "startTime", parts[0], "endTime", parts[1], "sortOrder", 50 + existing.size()));
+				}
+			}
+			out.append(lines[i]).append(',').append(duration).append('\n');
+		}
+		return out.toString();
+	}
+
+	private static int minutes(String start, String end) {
+		return (int) java.time.Duration.between(java.time.LocalTime.parse(start), java.time.LocalTime.parse(end)).toMinutes();
 	}
 }

@@ -38,7 +38,7 @@ import java.util.regex.Pattern;
  */
 final class TimetableColumns {
 
-	enum Field { DATE, DAY, SLOT, START, END, ROOM, BUILDING, NAME, CODE, SUBJECT_AREA, CATALOG, STUDENTS, ROOM_TYPE, GENDER }
+	enum Field { DATE, DAY, SLOT, START, END, ROOM, BUILDING, NAME, CODE, SUBJECT_AREA, CATALOG, STUDENTS, ROOM_TYPE, GENDER, DURATION }
 
 	private static final Map<Field, Set<String>> ALIASES = new LinkedHashMap<>();
 
@@ -54,6 +54,8 @@ final class TimetableColumns {
 		ALIASES.put(Field.CODE, Set.of("subjectcode", "coursecode", "courseid", "course", "code", "module", "modulecode", "examcode"));
 		ALIASES.put(Field.SUBJECT_AREA, Set.of("subject", "subj", "subjectarea", "subjcode"));
 		ALIASES.put(Field.CATALOG, Set.of("coursenumber", "crsenumb", "catalognbr", "catalognumber", "catalog", "crse", "courseno", "coursenum"));
+		ALIASES.put(Field.DURATION, Set.of("duration", "examduration", "durationminutes", "durationmins", "durationmin", "durationhours",
+			"durationhhmm", "durationhmm", "length", "examlength", "minutes", "examminutes", "timeallowed"));
 		ALIASES.put(Field.GENDER, Set.of("gender", "studentgender", "studentsgender", "hallgender", "sex", "malefemale"));
 		ALIASES.put(Field.ROOM_TYPE, Set.of("roomtype", "roomkind", "roomcategory", "typeofroom", "venuetype", "roomtypeoptional"));
 		ALIASES.put(Field.STUDENTS, Set.of("students", "studentsoptional", "studentcount", "enrollment", "enrolment", "enrltot", "enrolled",
@@ -81,6 +83,11 @@ final class TimetableColumns {
 	 */
 	/** @param timeRequired false for room allocation: an empty or missing time slot is chosen by the system */
 	static TimetableColumns of(List<String> headers, boolean roomRequired, boolean timeRequired) {
+		return of(headers, roomRequired, timeRequired, false);
+	}
+
+	/** @param durationRequired true for room allocation: every exam says how long it lasts */
+	static TimetableColumns of(List<String> headers, boolean roomRequired, boolean timeRequired, boolean durationRequired) {
 		TimetableColumns result = new TimetableColumns();
 		for (int index = 0; index < headers.size(); index++) {
 			String key = normalize(headers.get(index));
@@ -94,7 +101,8 @@ final class TimetableColumns {
 		}
 		boolean hasTime = !timeRequired || result.has(Field.SLOT) || (result.has(Field.START) && result.has(Field.END));
 		boolean roomMissing = roomRequired && !result.has(Field.ROOM);
-		if (!result.has(Field.DATE) || roomMissing || !hasTime) {
+		boolean durationMissing = durationRequired && !result.has(Field.DURATION);
+		if (!result.has(Field.DATE) || roomMissing || !hasTime || durationMissing) {
 			List<String> missing = new ArrayList<>();
 			if (!result.has(Field.DATE)) {
 				missing.add("date (e.g. \"Date\" or \"Exam Date\")");
@@ -104,6 +112,9 @@ final class TimetableColumns {
 			}
 			if (roomMissing) {
 				missing.add("room (e.g. \"Room\", \"Classroom\" or \"Facility ID\")");
+			}
+			if (durationMissing) {
+				missing.add("duration (\"Duration\": how long the exam lasts, e.g. 90 or 1:30)");
 			}
 			throw new ValidationException("Could not find these columns in the first row: " + String.join(", ", missing)
 				+ ". Found: " + String.join(", ", headers.stream().filter(h -> h != null && !h.isBlank()).toList()) + ".");
@@ -172,6 +183,7 @@ final class TimetableColumns {
 			case STUDENTS -> "students";
 			case ROOM_TYPE -> "room type";
 			case GENDER -> "gender";
+			case DURATION -> "duration";
 		};
 	}
 
@@ -289,6 +301,74 @@ final class TimetableColumns {
 			}
 		}
 		return null;
+	}
+
+	// ─────────────────────────── Duration ───────────────────────────
+
+	/** Shortest and longest exam Uni-Guard accepts, in minutes (the template offers 5, 10, … 300). */
+	static final int MIN_DURATION = 5;
+	static final int MAX_DURATION = 300;
+
+	/**
+	 * How long an exam lasts, in minutes: "90" (a plain number is minutes), "90 min", "1:30", "1h30", "1.5h", "2 hours"
+	 * or an Excel time cell (1:30). Adds a message to {@code errors} and returns null when it cannot be read or is
+	 * outside 5 – 300 minutes.
+	 */
+	static Integer parseDuration(TabularFile.CellValue cell, List<String> errors) {
+		Integer minutes;
+		String text = cell.text() == null ? "" : cell.text().trim().toLowerCase(Locale.ROOT).replace(',', '.');
+		if (cell.time() != null) {
+			minutes = cell.time().getHour() * 60 + cell.time().getMinute();
+		} else if (text.isEmpty()) {
+			errors.add("Duration is required: how long the exam lasts, e.g. 90 or 1:30.");
+			return null;
+		} else {
+			minutes = durationMinutes(text);
+		}
+		if (minutes == null) {
+			errors.add("Duration \"" + cell.text().trim() + "\" is not a duration. Write minutes (90) or hours and minutes (1:30).");
+			return null;
+		}
+		if (minutes < MIN_DURATION || minutes > MAX_DURATION) {
+			errors.add("Duration " + formatMinutes(minutes) + " is not possible: choose 5 to 300 minutes.");
+			return null;
+		}
+		return minutes;
+	}
+
+	private static final Pattern HOURS_MINUTES = Pattern.compile(
+		"(\\d+(?:\\.\\d+)?)\\s*(?:h|hr|hrs|hour|hours)\\s*(?:(\\d+)\\s*(?:m|min|mins|minute|minutes)?)?");
+	private static final Pattern MINUTES = Pattern.compile("(\\d+)\\s*(?:m|min|mins|minute|minutes)");
+	private static final Pattern CLOCK = Pattern.compile("(\\d{1,2}):(\\d{2})(?::00)?");
+
+	static Integer durationMinutes(String raw) {
+		String text = raw.trim().toLowerCase(Locale.ROOT).replace(',', '.');
+		java.util.regex.Matcher m;
+		if ((m = CLOCK.matcher(text)).matches()) {
+			return Integer.parseInt(m.group(1)) * 60 + Integer.parseInt(m.group(2));
+		}
+		if ((m = HOURS_MINUTES.matcher(text)).matches()) {
+			double hours = Double.parseDouble(m.group(1));
+			int extra = m.group(2) == null ? 0 : Integer.parseInt(m.group(2));
+			return (int) Math.round(hours * 60) + extra;
+		}
+		if ((m = MINUTES.matcher(text)).matches()) {
+			return Integer.parseInt(m.group(1));
+		}
+		if (text.matches("\\d+(?:\\.0+)?")) { // "90" (Excel may send 90.0): minutes
+			return (int) Double.parseDouble(text);
+		}
+		return null;
+	}
+
+	/** 90 → "1 h 30 min", 120 → "2 h", 45 → "45 min". */
+	static String formatMinutes(int minutes) {
+		int h = minutes / 60;
+		int m = minutes % 60;
+		if (h == 0) {
+			return m + " min";
+		}
+		return m == 0 ? h + " h" : h + " h " + m + " min";
 	}
 
 	/** "09:00 - 12:00", "9:00 AM – 12:00 PM", "09:00 to 12:00" → start and end; null when not a range. */

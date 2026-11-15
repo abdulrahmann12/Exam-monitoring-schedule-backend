@@ -64,6 +64,11 @@ public record SettingsRequest(
 	@Max(value = SchedulingSettings.MAX_CHIEF_PARALLEL_ROOMS, message = "A chief invigilator can cover at most 10 rooms at the same time")
 	Integer chiefMaxParallelRooms,
 
+	/** Percentage of each room's seats used for exams (gaps against cheating). Omit to keep the current value. */
+	@Min(value = SchedulingSettings.MIN_EXAM_FILL_PERCENT, message = "Exam seating must use at least 10% of a room's seats")
+	@Max(value = 100, message = "Exam seating can use at most 100% of a room's seats")
+	Integer examFillPercent,
+
 	/** Signature blocks for exported schedules; omit to keep them, an empty list removes them. */
 	@Size(max = 4, message = "At most 4 signatures fit on an exported page")
 	List<@Valid DocumentSignature> documentSignatures

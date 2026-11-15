@@ -63,6 +63,7 @@ public class RoomAllocationExportService {
 	private final RoomAllocationBatchRepository batchRepository;
 	private final RoomAssignmentRepository roomAssignmentRepository;
 	private final SettingsRepository settingsRepository;
+	private final SchedulingContextLoader contextLoader;
 
 	/** A file to download. */
 	public record Download(String fileName, byte[] bytes) {
@@ -72,6 +73,7 @@ public class RoomAllocationExportService {
 	public Download doorSheets(UUID batchId) {
 		RoomAllocationBatch batch = requireBatch(batchId);
 		List<RoomAssignment> rooms = rooms(batch);
+		java.util.function.IntUnaryOperator examSeats = contextLoader.settings()::examSeats; // Settings: exam seating %
 		String university = settingsRepository.findById(TenantContext.require()).map(Settings::getUniversityName).orElse(null);
 		String period = batch.getScheduleGroup().getName();
 
@@ -102,7 +104,7 @@ public class RoomAllocationExportService {
 				name.setAlignment(Element.ALIGN_CENTER);
 				document.add(name);
 				String building = room.getRoom().buildingKey().isEmpty() ? "" : "Building " + room.getRoom().getBuilding().trim() + " · ";
-				Paragraph seats = new Paragraph(building + room.getRoom().getCapacity() + " seats", sub);
+				Paragraph seats = new Paragraph(building + examSeats.applyAsInt(room.getRoom().getCapacity()) + " seats", sub);
 				seats.setAlignment(Element.ALIGN_CENTER);
 				seats.setSpacingAfter(36);
 				document.add(seats);
@@ -122,7 +124,7 @@ public class RoomAllocationExportService {
 
 				PdfPTable table = new PdfPTable(new float[] {1.2f, 3f});
 				table.setWidthPercentage(100);
-				row(table, "Students", (room.getStudentCount() == null ? "–" : room.getStudentCount().toString()) + " of " + room.getRoom().getCapacity() + " seats", label, value);
+				row(table, "Students", (room.getStudentCount() == null ? "–" : room.getStudentCount().toString()) + " of " + examSeats.applyAsInt(room.getRoom().getCapacity()) + " seats", label, value);
 				row(table, "Chief", room.getChiefInvigilator() == null ? "–" : room.getChiefInvigilator().getName(), label, value);
 				row(table, "Invigilators", invigilators(room, "\n"), label, value);
 				document.add(table);
@@ -138,6 +140,7 @@ public class RoomAllocationExportService {
 	public Download excel(UUID batchId) {
 		RoomAllocationBatch batch = requireBatch(batchId);
 		List<RoomAssignment> rooms = rooms(batch);
+		java.util.function.IntUnaryOperator examSeats = contextLoader.settings()::examSeats; // Settings: exam seating %
 		try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
 			Sheet sheet = workbook.createSheet("Room allocation");
 			CellStyle header = workbook.createCellStyle();
@@ -171,7 +174,7 @@ public class RoomAllocationExportService {
 				if (room.getStudentCount() != null) {
 					row.createCell(8).setCellValue(room.getStudentCount());
 				}
-				row.createCell(9).setCellValue(room.getRoom().getCapacity());
+				row.createCell(9).setCellValue(examSeats.applyAsInt(room.getRoom().getCapacity()));
 				row.createCell(10).setCellValue(room.getChiefInvigilator() == null ? "" : safe(room.getChiefInvigilator().getName()));
 				row.createCell(11).setCellValue(safe(invigilators(room, ", ")));
 			}

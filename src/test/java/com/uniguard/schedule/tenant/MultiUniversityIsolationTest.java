@@ -146,7 +146,8 @@ class MultiUniversityIsolationTest {
 		String roomA = id(created(post("/api/rooms"), a, Map.of("name", "Isolation Alloc Hall", "capacity", 200, "type", "LARGE",
 			"minInvigilators", 1, "hallGender", "MIXED")));
 		String groupA = id(created(post("/api/schedule-groups"), a, Map.of("name", "Isolation Alloc A")));
-		String csv = "Date,Time Slot,Code,Students\n2031-03-03,09:00 - 11:00,ISO1,20\n";
+		String slotA = id(created(post("/api/slots"), a, Map.of("label", "Iso 09-11", "startTime", "09:00:00", "endTime", "11:00:00", "sortOrder", 91)));
+		String csv = "Date,Time Slot,Code,Students,Duration\n2031-03-03,09:00 - 11:00,ISO1,20,120\n";
 		var save = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/room-allocation/save")
 			.file(new org.springframework.mock.web.MockMultipartFile("file", "a.csv", "text/csv", csv.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
 			.param("scheduleGroupId", groupA);
@@ -166,20 +167,23 @@ class MultiUniversityIsolationTest {
 		// B cannot pin A's room into its own plan: the room is simply not there for B (B uses its own room).
 		String roomB = id(created(post("/api/rooms"), b, Map.of("name", "Isolation B Room", "capacity", 50, "type", "MEDIUM",
 			"minInvigilators", 1, "hallGender", "MIXED")));
+		String slotB = id(created(post("/api/slots"), b, Map.of("label", "Iso 09-11", "startTime", "09:00:00", "endTime", "11:00:00", "sortOrder", 91)));
 		String groupB = objectMapper.readTree(body(mockMvc.perform(authed(get("/api/schedule-groups?size=100"), b)))).get("content").get(0).get("id").asText();
 		var preview = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart("/api/room-allocation/preview")
 			.file(new org.springframework.mock.web.MockMultipartFile("file", "b.csv", "text/csv",
-				"Date,Time Slot,Code,Students\n2031-03-03,09:00 - 11:00,ISOB,20\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+				"Date,Time Slot,Code,Students,Duration\n2031-03-03,09:00 - 11:00,ISOB,20,120\n".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
 			.param("scheduleGroupId", groupB)
 			.param("adjustments", "{\"anchors\":{\"2\":\"" + roomA + "\"},\"times\":{\"2\":\"09:00-11:00\"}}");
 		String planB = body(mockMvc.perform(authed(preview, b)).andExpect(status().isOk()));
 		assertThat(planB).doesNotContain(roomA).doesNotContain("Isolation Alloc Hall").contains("Isolation B Room");
 		mockMvc.perform(authed(delete("/api/rooms/" + roomB), b)).andExpect(status().isNoContent());
+		mockMvc.perform(authed(delete("/api/slots/" + slotB), b)).andExpect(status().is2xxSuccessful());
 
 		// Still A's: A can undo it.
 		mockMvc.perform(authed(post("/api/room-allocation/batches/" + batchId + "/undo"), a)).andExpect(status().isOk());
 		mockMvc.perform(authed(delete("/api/schedule-groups/" + groupA), a)).andExpect(status().isNoContent());
 		mockMvc.perform(authed(delete("/api/rooms/" + roomA), a)).andExpect(status().isNoContent());
+		mockMvc.perform(authed(delete("/api/slots/" + slotA), a)).andExpect(status().is2xxSuccessful());
 	}
 
 	@Test

@@ -18,6 +18,7 @@ public record SettingsResponse(
 	int minRestMinutes,
 	int studentsPerInvigilator,
 	int chiefMaxParallelRooms,
+	int examFillPercent,
 	java.util.List<DocumentSignature> documentSignatures
 ) {
 }
