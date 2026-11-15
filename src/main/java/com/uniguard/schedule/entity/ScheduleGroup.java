@@ -63,6 +63,10 @@ public class ScheduleGroup {
 	@Column(nullable = false)
 	private boolean archived = false;
 
+	/** Room Allocation: time slots unticked under "Time slots to use" ("09:00-11:00,13:00-15:00"); null = all used. */
+	@Column(name = "allocation_skip_times", length = 2000)
+	private String allocationSkipTimes;
+
 	@CreatedDate
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;

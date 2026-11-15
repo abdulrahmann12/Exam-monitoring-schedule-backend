@@ -93,7 +93,7 @@ public class RoomAllocationService {
 	@Transactional(readOnly = true, isolation = Isolation.READ_COMMITTED)
 	public RoomAllocationPreviewDTO preview(UUID scheduleGroupId, MultipartFile file, String dateOrder, String adjustments) {
 		ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
-		Plan plan = plan(file, dateOrder, adjustments);
+		Plan plan = plan(file, dateOrder, adjustments, group);
 		LOGGER.info("Room allocation preview: groupId={}, exams={}, sittings={}", group.getId(), plan.exams, plan.sittings.size());
 		return plan.toPreview();
 	}
@@ -110,7 +110,8 @@ public class RoomAllocationService {
 		demoModeService.rejectIfDemoUser("room-allocation-save");
 		ScheduleGroup group = scheduleGroupSupport.requireGroup(scheduleGroupId);
 		scheduleWriteLock.acquire();
-		Plan plan = plan(file, dateOrder, adjustments);
+		Plan plan = plan(file, dateOrder, adjustments, group);
+		rememberSlotsToUse(group, plan);
 
 		int nextSortOrder = timeSlotRepository.findAll().stream().mapToInt(TimeSlot::getSortOrder).max().orElse(0) + 1;
 		List<String> slotsCreated = new ArrayList<>();
@@ -422,8 +423,9 @@ public class RoomAllocationService {
 	 * Changes the user made on the page before saving: another time for a row ("HH:mm-HH:mm") and/or the exact rooms
 	 * for a row. They are applied on top of the file every time the plan is made (preview and save).
 	 */
-	record Adjustments(Map<Integer, String> times, Map<Integer, List<UUID>> rooms, Map<Integer, String> dates, Map<Integer, UUID> anchors) {
-		static final Adjustments NONE = new Adjustments(Map.of(), Map.of(), Map.of(), Map.of());
+	record Adjustments(Map<Integer, String> times, Map<Integer, List<UUID>> rooms, Map<Integer, String> dates, Map<Integer, UUID> anchors,
+	                   List<String> skipTimes) {
+		static final Adjustments NONE = new Adjustments(Map.of(), Map.of(), Map.of(), Map.of(), null);
 
 		static Adjustments parse(String json, com.fasterxml.jackson.databind.ObjectMapper mapper) {
 			if (json == null || json.isBlank()) {
@@ -439,7 +441,13 @@ public class RoomAllocationService {
 					|| rooms.values().stream().anyMatch(list -> list == null || list.size() > 200)) {
 					throw new ValidationException("Too many changes.");
 				}
-				return new Adjustments(times, rooms, dates, anchors);
+				// null = not chosen on the page: the exam period's remembered choice is used.
+				List<String> skipTimes = parsed.skipTimes() == null ? null : parsed.skipTimes().stream()
+					.filter(java.util.Objects::nonNull).map(String::trim).distinct().toList();
+				if (skipTimes != null && (skipTimes.size() > 150 || skipTimes.stream().anyMatch(time -> !SKIP_TIME.matcher(time).matches()))) {
+					throw new ValidationException("Your time slot choice could not be read. Tick the time slots again.");
+				}
+				return new Adjustments(times, rooms, dates, anchors, skipTimes);
 			} catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
 				throw new ValidationException("Your changes could not be read. Undo them and try again.");
 			}
@@ -447,7 +455,7 @@ public class RoomAllocationService {
 	}
 
 	private List<ExamRow> readRows(TabularFile.Table table, TimetableColumns columns, TimetableColumns.DateOrder order, List<String> warnings,
-	                               Adjustments adjustments, List<TimeSlot> activeSlots) {
+	                               Adjustments adjustments, List<TimeSlot> activeSlots, Map<Integer, Integer> examsByLength) {
 		// Exams only go into time slots that already exist (Time Slots page) and last exactly as long as the exam.
 		Set<String> slotTimes = activeSlots.stream().map(slot -> timesKey(slot.getStartTime(), slot.getEndTime())).collect(Collectors.toSet());
 		Set<Integer> slotLengths = activeSlots.stream().map(slot -> minutesOf(slot.getStartTime(), slot.getEndTime())).collect(Collectors.toSet());
@@ -499,6 +507,7 @@ public class RoomAllocationService {
 			HallGender gender = gender(columns.text(row, TimetableColumns.Field.GENDER), rowErrors);
 			Integer duration = TimetableColumns.parseDuration(columns.cell(row, TimetableColumns.Field.DURATION), rowErrors);
 			if (duration != null) {
+				examsByLength.merge(duration, 1, Integer::sum);
 				String length = TimetableColumns.formatMinutes(duration);
 				if (!autoTime && times != null && rowErrors.isEmpty()) {
 					String range = times[0].format(HH_MM) + "–" + times[1].format(HH_MM);
@@ -701,6 +710,11 @@ public class RoomAllocationService {
 		final List<RoomAllocationPreviewDTO.Booked> booked = new ArrayList<>();
 		int examFillPercent = SchedulingSettings.DEFAULT_EXAM_FILL_PERCENT;
 		int exams;
+		/** Time slots ("HH:mm-HH:mm") Uni-Guard may not choose (unticked under "Time slots to use"). */
+		Set<String> skipTimes = Set.of();
+		/** Every time slot shown under "Time slots to use" (the lengths in this file). */
+		Set<String> shownTimes = Set.of();
+		final List<RoomAllocationPreviewDTO.SlotChoice> slotChoices = new ArrayList<>();
 
 		RoomAllocationPreviewDTO toPreview() {
 			int fullySeated = 0;
@@ -740,11 +754,12 @@ public class RoomAllocationService {
 			}
 			int placed = students - unplaced;
 			return new RoomAllocationPreviewDTO(exams, fullySeated, students, unplaced, roomsUsed, seats, seats - placed,
-				List.copyOf(sittingDtos), List.copyOf(warnings), List.copyOf(slotsToCreate), columnsRecognised, List.copyOf(booked), examFillPercent);
+				List.copyOf(sittingDtos), List.copyOf(warnings), List.copyOf(slotsToCreate), columnsRecognised, List.copyOf(booked), examFillPercent,
+				List.copyOf(slotChoices));
 		}
 	}
 
-	private Plan plan(MultipartFile file, String dateOrder, String adjustmentsJson) {
+	private Plan plan(MultipartFile file, String dateOrder, String adjustmentsJson, ScheduleGroup group) {
 		Adjustments adjustments = Adjustments.parse(adjustmentsJson, objectMapper);
 		TabularFile.Table table = TabularFile.read(file, MAX_ROWS);
 		if (table.rows().isEmpty()) {
@@ -766,8 +781,10 @@ public class RoomAllocationService {
 		Plan plan = new Plan();
 		plan.columnsRecognised = columns.recognised();
 		List<TimeSlot> activeSlots = timeSlotRepository.findByActiveTrueOrderBySortOrderAsc();
-		List<ExamRow> rows = readRows(table, columns, order, plan.warnings, adjustments, activeSlots);
+		Map<Integer, Integer> examsByLength = new TreeMap<>();
+		List<ExamRow> rows = readRows(table, columns, order, plan.warnings, adjustments, activeSlots, examsByLength);
 		plan.exams = rows.size();
+		chooseSlotsToUse(plan, adjustments, group, activeSlots, examsByLength);
 
 		Map<SittingKey, List<ExamRow>> bySitting = new TreeMap<>();
 		for (ExamRow row : rows) {
@@ -1062,6 +1079,7 @@ public class RoomAllocationService {
 	private void addHints(Plan plan, List<Room> activeRooms, SchedulingContext context) {
 		java.util.function.ToIntFunction<Room> examSeats = room -> context.settings().examSeats(room.getCapacity()); // exam seats
 		List<TimeSlot> slots = new ArrayList<>(timeSlotRepository.findByActiveTrueOrderBySortOrderAsc().stream()
+			.filter(slot -> !plan.skipTimes.contains(timesKey(slot.getStartTime(), slot.getEndTime()))) // only ticked times are suggested
 			.collect(Collectors.toMap(slot -> timesKey(slot.getStartTime(), slot.getEndTime()), slot -> slot, (a, b) -> a, LinkedHashMap::new))
 			.values());
 		slots.sort(Comparator.comparing(TimeSlot::getStartTime).thenComparing(TimeSlot::getEndTime));
@@ -1261,6 +1279,7 @@ public class RoomAllocationService {
 	 */
 	private void chooseTimes(Plan plan, List<ExamRow> autoRows, List<Room> activeRooms, SchedulingContext context) {
 		List<TimeSlot> candidates = new ArrayList<>(timeSlotRepository.findByActiveTrueOrderBySortOrderAsc().stream()
+			.filter(slot -> !plan.skipTimes.contains(timesKey(slot.getStartTime(), slot.getEndTime()))) // unticked: never chosen
 			.collect(Collectors.toMap(slot -> timesKey(slot.getStartTime(), slot.getEndTime()), slot -> slot, (a, b) -> a, LinkedHashMap::new))
 			.values());
 		candidates.sort(Comparator.comparing(TimeSlot::getStartTime).thenComparing(TimeSlot::getEndTime));
@@ -1512,6 +1531,68 @@ public class RoomAllocationService {
 		probe.setTimeSlot(slot);
 		probe.setExamDate(date);
 		return probe;
+	}
+
+	private static final java.util.regex.Pattern SKIP_TIME = java.util.regex.Pattern.compile("\\d{2}:\\d{2}-\\d{2}:\\d{2}");
+
+	/**
+	 * "Time slots to use": which time slots Uni-Guard may choose for exams without a time. The page's choice wins;
+	 * otherwise the exam period's remembered one. Every exam length in the file keeps at least one time slot: if all
+	 * of a length are unticked, all of them are used again (with a warning) so no exam is left without a time.
+	 */
+	private void chooseSlotsToUse(Plan plan, Adjustments adjustments, ScheduleGroup group, List<TimeSlot> activeSlots,
+	                              Map<Integer, Integer> examsByLength) {
+		Set<String> skip = new java.util.HashSet<>(adjustments.skipTimes() != null ? adjustments.skipTimes() : rememberedSkipTimes(group));
+		Map<String, TimeSlot> byTimes = new LinkedHashMap<>();
+		activeSlots.stream()
+			.sorted(Comparator.comparing(TimeSlot::getStartTime).thenComparing(TimeSlot::getEndTime))
+			.forEach(slot -> byTimes.putIfAbsent(timesKey(slot.getStartTime(), slot.getEndTime()), slot));
+		Set<String> shown = new java.util.HashSet<>();
+		for (Map.Entry<Integer, Integer> length : examsByLength.entrySet()) {
+			List<TimeSlot> ofLength = byTimes.values().stream()
+				.filter(slot -> minutesOf(slot.getStartTime(), slot.getEndTime()) == length.getKey()).toList();
+			if (ofLength.isEmpty()) {
+				continue; // the rows already say "No time slot lasts ..."
+			}
+			List<String> keys = ofLength.stream().map(slot -> timesKey(slot.getStartTime(), slot.getEndTime())).toList();
+			shown.addAll(keys);
+			if (skip.containsAll(keys)) {
+				keys.forEach(skip::remove);
+				plan.warnings.add("Every time slot of " + TimetableColumns.formatMinutes(length.getKey())
+					+ " was unticked under “Time slots to use”, so all of them are used. Keep at least one ticked.");
+			}
+			plan.slotChoices.add(new RoomAllocationPreviewDTO.SlotChoice(length.getKey(), length.getValue(), ofLength.stream()
+				.map(slot -> new RoomAllocationPreviewDTO.SlotOption(timesKey(slot.getStartTime(), slot.getEndTime()),
+					slot.getStartTime().format(HH_MM) + "–" + slot.getEndTime().format(HH_MM), slot.getLabel(),
+					!skip.contains(timesKey(slot.getStartTime(), slot.getEndTime()))))
+				.toList()));
+		}
+		plan.skipTimes = Set.copyOf(skip);
+		plan.shownTimes = Set.copyOf(shown);
+	}
+
+	private static List<String> rememberedSkipTimes(ScheduleGroup group) {
+		String saved = group.getAllocationSkipTimes();
+		if (saved == null || saved.isBlank()) {
+			return List.of();
+		}
+		return java.util.Arrays.stream(saved.split(",")).map(String::trim).filter(time -> SKIP_TIME.matcher(time).matches()).toList();
+	}
+
+	/**
+	 * Save rooms: the exam period remembers the ticks for the next upload. Lengths not in this file keep their
+	 * earlier choice.
+	 */
+	private static void rememberSlotsToUse(ScheduleGroup group, Plan plan) {
+		java.util.TreeSet<String> skip = new java.util.TreeSet<>(rememberedSkipTimes(group));
+		skip.removeAll(plan.shownTimes);
+		plan.skipTimes.stream().filter(plan.shownTimes::contains).forEach(skip::add);
+		String value = String.join(",", skip);
+		while (value.length() > 2000) { // never more than the column holds (about 180 time slots)
+			skip.pollFirst();
+			value = String.join(",", skip);
+		}
+		group.setAllocationSkipTimes(value.isEmpty() ? null : value);
 	}
 
 	private static String timesKey(LocalTime start, LocalTime end) {

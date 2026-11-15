@@ -1090,6 +1090,61 @@ class RoomAllocationTest {
 		assertThat(preview(csv, "{\"times\":{\"3\":\"12:00-14:00\"}}", "preview").andExpect(status().isOk()));
 	}
 
+	// ── Time slots to use: the user unticks time slots Uni-Guard may not choose; the exam period remembers it ──
+
+	@Test
+	void onlyTickedTimeSlotsAreChosenAndTheExamPeriodRemembersTheChoice() throws Exception {
+		twoSlots(); // 09:00–11:00 and 12:00–14:00
+		json(post("/api/slots"), Map.of("label", "Afternoon", "startTime", "15:00", "endTime", "17:00", "sortOrder", 3));
+		json(post("/api/slots"), Map.of("label", "Short morning", "startTime", "09:00", "endTime", "10:30", "sortOrder", 4));
+		String csv = "Date,Time Slot,Code,Students,Duration\n2028-06-01,,AUTO1,20,120\n2028-06-02,,AUTO2,20,120\n"
+			+ "2028-06-01,12:00 - 14:00,FIXED,20,120\n2028-06-01,,SHORT,20,90\n";
+
+		// Every length in the file, with its time slots, all ticked at first.
+		JsonNode all = ok(preview(csv));
+		assertThat(all.get("slotChoices")).hasSize(2);
+		JsonNode ninety = all.get("slotChoices").get(0);
+		JsonNode twoHours = all.get("slotChoices").get(1);
+		assertThat(ninety.get("durationMinutes").asInt()).isEqualTo(90);
+		assertThat(ninety.get("exams").asInt()).isEqualTo(1);
+		assertThat(twoHours.get("exams").asInt()).isEqualTo(3);
+		List<String> twoHourSlots = new ArrayList<>();
+		twoHours.get("slots").forEach(slot -> {
+			twoHourSlots.add(slot.get("key").asText());
+			assertThat(slot.get("used").asBoolean()).isTrue();
+		});
+		assertThat(twoHourSlots).containsExactly("09:00-11:00", "12:00-14:00", "15:00-17:00");
+
+		// Morning and noon unticked: the exams without a time go to the afternoon; the time written in the file stays.
+		String afternoonOnly = "{\"times\":{},\"rooms\":{},\"skipTimes\":[\"09:00-11:00\",\"12:00-14:00\"]}";
+		JsonNode result = ok(preview(csv, afternoonOnly, "preview"));
+		Map<String, String> timeOf = new java.util.HashMap<>();
+		result.get("sittings").forEach(sitting -> sitting.get("exams").forEach(exam -> timeOf.put(exam.get("subjectCode").asText(), sitting.get("time").asText())));
+		assertThat(timeOf).containsEntry("AUTO1", "15:00–17:00").containsEntry("AUTO2", "15:00–17:00")
+			.containsEntry("FIXED", "12:00–14:00").containsEntry("SHORT", "09:00–10:30");
+		List<Boolean> used = new ArrayList<>();
+		result.get("slotChoices").get(1).get("slots").forEach(slot -> used.add(slot.get("used").asBoolean()));
+		assertThat(used).containsExactly(false, false, true);
+
+		// Every slot of a length unticked: all of them are used again, so no exam is left without a time.
+		JsonNode none = ok(preview(csv, "{\"skipTimes\":[\"09:00-11:00\",\"12:00-14:00\",\"15:00-17:00\"]}", "preview"));
+		assertThat(none.get("warnings").toString()).contains("Every time slot of 2 h was unticked");
+		none.get("slotChoices").get(1).get("slots").forEach(slot -> assertThat(slot.get("used").asBoolean()).isTrue());
+		assertThat(preview(csv, "{\"skipTimes\":[\"9am\"]}", "preview").andExpect(status().isBadRequest())
+			.andReturn().getResponse().getContentAsString()).contains("Your time slot choice could not be read");
+
+		// Save rooms remembers the choice for this exam period: the next upload starts with the same ticks.
+		ok(preview(csv, afternoonOnly, "save"));
+		List<Boolean> remembered = new ArrayList<>();
+		ok(preview(csv)).get("slotChoices").get(1).get("slots").forEach(slot -> remembered.add(slot.get("used").asBoolean()));
+		assertThat(remembered).containsExactly(false, false, true);
+		// A file with only 90-minute exams keeps the 2-hour choice when it is saved.
+		ok(preview("Date,Code,Students,Duration\n2028-06-05,ONLY90,10,90\n", "{\"skipTimes\":[]}", "save"));
+		List<Boolean> still = new ArrayList<>();
+		ok(preview(csv)).get("slotChoices").get(1).get("slots").forEach(slot -> still.add(slot.get("used").asBoolean()));
+		assertThat(still).containsExactly(false, false, true);
+	}
+
 	@Test
 	void oneCourseMayBeHeldInSeveralSittingsOnOneDay() throws Exception {
 		twoSlots(); // 09:00–11:00 and 12:00–14:00

@@ -34,8 +34,26 @@ public record RoomAllocationPreviewDTO(
 	List<String> columnsRecognised,
 	List<Booked> booked,
 	/** Settings → exam seating: the % of each room's seats used (room seats in this plan are already exam seats). */
-	int examFillPercent
+	int examFillPercent,
+	/** "Time slots to use": per exam length in the file, the time slots of that length and whether they are used. */
+	List<SlotChoice> slotChoices
 ) {
+
+	/**
+	 * @param durationMinutes an exam length found in the file
+	 * @param exams           rows of the file with that length
+	 * @param slots           the active time slots of exactly that length, in time order
+	 */
+	public record SlotChoice(int durationMinutes, int exams, List<SlotOption> slots) {
+	}
+
+	/**
+	 * @param key  "HH:mm-HH:mm", as sent back in adjustments.skipTimes
+	 * @param time "HH:mm–HH:mm" for display
+	 * @param used false = unticked: Uni-Guard does not choose it (times written in the file are still respected)
+	 */
+	public record SlotOption(String key, String time, String label, boolean used) {
+	}
 
 	/** A room already booked (saved exam room of any exam period) at that date and time. */
 	public record Booked(LocalDate date, String time, UUID roomId, String label) {
