@@ -269,6 +269,10 @@ public class AutoAssignmentService {
 			int held = StaffConcurrencyRules.countOverlappingChiefRooms(context.universe(), seats.getFirst(), chief.getId());
 			capacity[p] = Math.max(context.settings().parallelRoomsFor(chief) - held, 0);
 		}
+		if (seats.stream().anyMatch(seat -> !seat.getRoom().buildingKey().isEmpty())) {
+			fillChiefsByBuilding(seats, ordered, capacity, context, workload, run);
+			return;
+		}
 		List<List<Integer>> candidates = new ArrayList<>(seats.size());
 		for (RoomAssignment seat : seats) {
 			List<Integer> eligible = new ArrayList<>();
@@ -286,6 +290,102 @@ public class AutoAssignmentService {
 			oneEach[p] = Math.min(capacity[p], 1);
 		}
 		int[] result = SeatMatcher.match(candidates, capacity, SeatMatcher.match(candidates, oneEach));
+		for (int s = 0; s < seats.size(); s++) {
+			RoomAssignment seat = seats.get(s);
+			if (result[s] >= 0) {
+				Person chief = ordered.get(result[s]);
+				seat.setChiefInvigilator(chief);
+				workload.record(chief.getId(), seat);
+				run.chiefSlotsFilled++;
+			} else {
+				run.warnings.add(MessageFormat.format(Messages.ASSIGNMENT_NO_CHIEF_AVAILABLE, describeAssignment(seat)));
+			}
+		}
+	}
+
+	/**
+	 * Rooms with a building: a chief who covers several rooms at the same time gets them in one building
+	 * ("one chief for nearby rooms"), so fewer chiefs are needed. Buildings with the most rooms go first; each is
+	 * filled with as few chiefs as their room limit allows. Seats still empty after that may take a chief from
+	 * another building (a seat filled is better than an empty one).
+	 */
+	private static void fillChiefsByBuilding(List<RoomAssignment> seats, List<Person> ordered, int[] capacity, SchedulingContext context,
+	                                         WorkloadTracker workload, StaffingRun run) {
+		String[] usedIn = new String[ordered.size()];
+		// Identity, not equals(): Lombok's equals walks the whole object graph.
+		java.util.Set<RoomAssignment> mine = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+		mine.addAll(seats);
+		for (int p = 0; p < ordered.size(); p++) {
+			UUID chiefId = ordered.get(p).getId();
+			for (RoomAssignment other : context.universe()) { // a building where this chief already works at this time
+				if (!mine.contains(other) && other.getChiefInvigilator() != null && chiefId.equals(other.getChiefInvigilator().getId())
+					&& other.getExamDate().equals(seats.getFirst().getExamDate())
+					&& StaffConcurrencyRules.overlaps(other.getTimeSlot(), seats.getFirst().getTimeSlot())) {
+					usedIn[p] = other.getRoom().buildingKey();
+					break;
+				}
+			}
+		}
+		List<List<Integer>> eligible = new ArrayList<>(seats.size());
+		for (RoomAssignment seat : seats) {
+			List<Integer> people = new ArrayList<>();
+			for (int p = 0; p < ordered.size(); p++) {
+				if (capacity[p] > 0 && StaffConcurrencyRules.canTakeSeat(ordered.get(p), true, seat, context)) {
+					people.add(p);
+				}
+			}
+			eligible.add(people);
+		}
+		Map<String, List<Integer>> byBuilding = new java.util.TreeMap<>();
+		for (int s = 0; s < seats.size(); s++) {
+			byBuilding.computeIfAbsent(seats.get(s).getRoom().buildingKey(), key -> new ArrayList<>()).add(s);
+		}
+		List<String> buildings = new ArrayList<>(byBuilding.keySet());
+		buildings.sort(Comparator.comparing((String key) -> -byBuilding.get(key).size()).thenComparing(key -> key));
+
+		int[] result = new int[seats.size()];
+		java.util.Arrays.fill(result, -1);
+		int[] left = capacity.clone();
+		for (String building : buildings) {
+			List<Integer> indexes = byBuilding.get(building);
+			List<List<Integer>> candidates = new ArrayList<>();
+			for (int s : indexes) {
+				candidates.add(eligible.get(s).stream()
+					.filter(p -> left[p] > 0 && (usedIn[p] == null || usedIn[p].equals(building)))
+					.toList());
+			}
+			int[] matched = SeatMatcher.match(candidates, left);
+			for (int i = 0; i < indexes.size(); i++) {
+				if (matched[i] >= 0) {
+					result[indexes.get(i)] = matched[i];
+				}
+			}
+			for (int i = 0; i < indexes.size(); i++) {
+				if (matched[i] >= 0) {
+					left[matched[i]]--;
+					usedIn[matched[i]] = building;
+				}
+			}
+		}
+		// Last resort: an empty seat may take a chief who still has room, from another building.
+		List<Integer> empty = new ArrayList<>();
+		for (int s = 0; s < seats.size(); s++) {
+			if (result[s] < 0) {
+				empty.add(s);
+			}
+		}
+		if (!empty.isEmpty()) {
+			List<List<Integer>> candidates = new ArrayList<>();
+			for (int s : empty) {
+				candidates.add(eligible.get(s).stream().filter(p -> left[p] > 0).toList());
+			}
+			int[] matched = SeatMatcher.match(candidates, left);
+			for (int i = 0; i < empty.size(); i++) {
+				if (matched[i] >= 0) {
+					result[empty.get(i)] = matched[i];
+				}
+			}
+		}
 		for (int s = 0; s < seats.size(); s++) {
 			RoomAssignment seat = seats.get(s);
 			if (result[s] >= 0) {

@@ -258,7 +258,7 @@ public class ScheduleBulkUploadService {
 			throw new ValidationException(Messages.SCHEDULE_BULK_UPLOAD_EMPTY);
 		}
 		TimetableColumns columns = TimetableColumns.of(table.headers());
-		TimetableColumns.DateOrder order = parseDateOrder(dateOrder);
+		TimetableColumns.DateOrder order = TimetableColumns.parseDateOrder(dateOrder);
 		if (order == null) {
 			order = TimetableColumns.detectOrder(table.rows().stream()
 				.map(row -> columns.cell(row, TimetableColumns.Field.DATE))
@@ -291,7 +291,7 @@ public class ScheduleBulkUploadService {
 			int rowNumber = row.rowNumber();
 			List<String> rowErrors = new ArrayList<>();
 			LocalDate examDate = TimetableColumns.parseDate(columns.cell(row, TimetableColumns.Field.DATE), order, rowErrors);
-			LocalTime[] times = resolveTimes(row, columns, rowErrors);
+			LocalTime[] times = columns.times(row, rowErrors);
 			Room room = resolveRoom(row, columns, roomsByNormalizedName, rowErrors);
 			String subjectName = validateOptionalField(columns.subjectName(row), SUBJECT_NAME_MAX_LENGTH, Messages.SCHEDULE_BULK_ROW_SUBJECT_NAME_TOO_LONG, rowErrors);
 			String subjectCode = validateOptionalField(columns.subjectCode(row), SUBJECT_CODE_MAX_LENGTH, Messages.SCHEDULE_BULK_ROW_SUBJECT_CODE_TOO_LONG, rowErrors);
@@ -374,58 +374,8 @@ public class ScheduleBulkUploadService {
 		);
 	}
 
-	private static TimetableColumns.DateOrder parseDateOrder(String value) {
-		if (value == null || value.isBlank() || "AUTO".equalsIgnoreCase(value)) {
-			return null;
-		}
-		try {
-			return TimetableColumns.DateOrder.valueOf(value.trim().toUpperCase(java.util.Locale.ROOT));
-		} catch (IllegalArgumentException ex) {
-			throw new ValidationException("dateOrder must be DAY_FIRST, MONTH_FIRST or empty.");
-		}
-	}
-
 	private static String timesKey(LocalTime start, LocalTime end) {
 		return start.format(SLOT_DISPLAY_TIME_FORMAT) + "-" + end.format(SLOT_DISPLAY_TIME_FORMAT);
-	}
-
-	/** Separate start/end columns, or one "09:00 - 12:00" column. */
-	private static LocalTime[] resolveTimes(TabularFile.DataRow row, TimetableColumns columns, List<String> errors) {
-		LocalTime start = null;
-		LocalTime end = null;
-		if (columns.has(TimetableColumns.Field.START) && columns.has(TimetableColumns.Field.END)) {
-			TabularFile.CellValue startCell = columns.cell(row, TimetableColumns.Field.START);
-			TabularFile.CellValue endCell = columns.cell(row, TimetableColumns.Field.END);
-			start = TimetableColumns.parseTime(startCell);
-			end = TimetableColumns.parseTime(endCell);
-			if (start == null) {
-				errors.add(startCell.text().isBlank() ? "Start time is required." : "Start time \"" + startCell.text() + "\" is not a time (use e.g. 09:00).");
-			}
-			if (end == null) {
-				errors.add(endCell.text().isBlank() ? "End time is required." : "End time \"" + endCell.text() + "\" is not a time (use e.g. 12:00).");
-			}
-		} else {
-			String text = NameNormalizationUtil.normalizeWhitespace(columns.text(row, TimetableColumns.Field.SLOT));
-			if (text == null || text.isBlank()) {
-				errors.add(Messages.SCHEDULE_BULK_ROW_SLOT_REQUIRED);
-				return null;
-			}
-			LocalTime[] range = TimetableColumns.parseRange(text);
-			if (range == null) {
-				errors.add(MessageFormat.format(Messages.SCHEDULE_BULK_ROW_SLOT_INVALID_FORMAT, text));
-				return null;
-			}
-			start = range[0];
-			end = range[1];
-		}
-		if (start == null || end == null) {
-			return null;
-		}
-		if (!end.isAfter(start)) {
-			errors.add("The exam must end after it starts (" + start.format(SLOT_DISPLAY_TIME_FORMAT) + " – " + end.format(SLOT_DISPLAY_TIME_FORMAT) + ").");
-			return null;
-		}
-		return new LocalTime[] {start, end};
 	}
 
 	/** The room by name; with a building column also "Building Room" (Banner keeps them apart). */

@@ -136,6 +136,19 @@ public interface RoomAssignmentRepository extends JpaRepository<RoomAssignment, 
 
 	long countByScheduleGroupId(UUID scheduleGroupId);
 
+	/** Exam rooms still there from one Room Allocation save. */
+	long countByAllocationBatchId(UUID allocationBatchId);
+
+	@EntityGraph(attributePaths = {
+		"room",
+		"timeSlot",
+		"chiefInvigilator",
+		"invigilatorAssignments",
+		"invigilatorAssignments.invigilator"
+	})
+	@Query("select distinct ra from RoomAssignment ra where ra.allocationBatchId = :batchId")
+	List<RoomAssignment> findAllDetailedByAllocationBatchId(@Param("batchId") UUID batchId);
+
 	@EntityGraph(attributePaths = {
 		"room",
 		"timeSlot",

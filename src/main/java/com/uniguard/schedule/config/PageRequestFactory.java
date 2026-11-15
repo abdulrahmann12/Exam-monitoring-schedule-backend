@@ -28,6 +28,12 @@ public class PageRequestFactory {
 			throw new ValidationException(MessageFormat.format(Messages.PAGINATION_INVALID_SORT, sortBy, String.join(", ", allowedSorts)));
 		}
 
-		return PageRequest.of(page, size, Sort.by(direction, sortBy));
+		// Always end with the id: many rows share a date or a name, and without a tie-breaker the database may
+		// order them differently for each page, so a row shows up on two pages and another on none.
+		Sort sort = Sort.by(direction, sortBy);
+		if (!"id".equals(sortBy)) {
+			sort = sort.and(Sort.by(Sort.Direction.ASC, "id"));
+		}
+		return PageRequest.of(page, size, sort);
 	}
 }

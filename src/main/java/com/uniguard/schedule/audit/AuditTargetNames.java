@@ -24,6 +24,7 @@ public class AuditTargetNames {
 	private final TimeSlotRepository slots;
 	private final ScheduleGroupRepository groups;
 	private final RoomAssignmentRepository assignments;
+	private final com.uniguard.schedule.repository.RoomCategoryRepository roomTypes;
 	private final TransactionTemplate readOnly;
 
 	public AuditTargetNames(
@@ -32,8 +33,10 @@ public class AuditTargetNames {
 		TimeSlotRepository slots,
 		ScheduleGroupRepository groups,
 		RoomAssignmentRepository assignments,
+		com.uniguard.schedule.repository.RoomCategoryRepository roomTypes,
 		PlatformTransactionManager transactionManager
 	) {
+		this.roomTypes = roomTypes;
 		this.people = people;
 		this.rooms = rooms;
 		this.slots = slots;
@@ -55,6 +58,7 @@ public class AuditTargetNames {
 			return readOnly.execute(status -> switch (targetType) {
 				case "PERSON" -> people.findById(uuid).map(p -> p.getName()).orElse(null);
 				case "ROOM" -> rooms.findById(uuid).map(r -> r.getName()).orElse(null);
+				case "ROOM_TYPE" -> roomTypes.findById(uuid).map(t -> t.getName()).orElse(null);
 				case "TIME_SLOT" -> slots.findById(uuid).map(s -> s.getLabel()).orElse(null);
 				case "SCHEDULE_GROUP" -> groups.findById(uuid).map(g -> g.getName()).orElse(null);
 				case "ASSIGNMENT" -> assignments.findById(uuid).map(a -> AuditRoutes.describeAssignment(

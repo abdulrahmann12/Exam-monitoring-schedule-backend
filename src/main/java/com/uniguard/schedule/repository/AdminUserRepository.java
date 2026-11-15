@@ -17,6 +17,17 @@ public interface AdminUserRepository extends JpaRepository<AdminUser, UUID> {
 
 	Optional<AdminUser> findByEmailIgnoreCase(String email);
 
+	/**
+	 * Everything one API request must check, in ONE database round trip (it runs on every request):
+	 * [0] the user, [1] how many open sessions with this id belong to them (0 or 1),
+	 * [2] whether their university is active (null = no university / not found).
+	 */
+	@Query("SELECT a, "
+		+ "(SELECT COUNT(s) FROM UserSession s WHERE s.id = :sessionId AND s.userId = a.id AND s.revokedAt IS NULL AND s.expiresAt > :now), "
+		+ "(SELECT u.active FROM University u WHERE u.id = a.universityId) "
+		+ "FROM AdminUser a WHERE UPPER(a.email) = UPPER(:email)")
+	List<Object[]> findForRequest(String email, UUID sessionId, java.time.Instant now);
+
 	boolean existsByRole(AdminRole role);
 
 	/** Upgrade helper: accounts created before universities existed join the given university. */

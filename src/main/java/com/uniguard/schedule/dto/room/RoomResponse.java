@@ -14,6 +14,13 @@ public record RoomResponse(
 	int minInvigilators,
 	HallGender hallGender,
 	boolean active,
+	/** Room type; null = none (a normal room). */
+	UUID roomCategoryId,
+	String roomCategoryName,
+	/** true = special type (lab, studio): only for exams that ask for it. */
+	boolean roomCategorySpecial,
+	/** Building, or null when not known. */
+	String building,
 	Instant createdAt,
 	Instant updatedAt
 ) {

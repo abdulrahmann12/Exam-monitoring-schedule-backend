@@ -44,7 +44,8 @@ public class DemoReadOnlyFilter extends OncePerRequestFilter {
 	/** POST endpoints that do not modify data. */
 	private static final Set<String> READ_ONLY_POSTS = Set.of(
 		"/api/auth/logout",
-		"/api/assignments/generate-preview"
+		"/api/assignments/generate-preview",
+		"/api/room-allocation/preview"
 	);
 
 	private final ObjectMapper objectMapper;

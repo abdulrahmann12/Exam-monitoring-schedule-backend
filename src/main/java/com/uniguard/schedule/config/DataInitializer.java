@@ -44,6 +44,7 @@ public class DataInitializer implements ApplicationRunner {
 	private final ScheduleGroupSupport scheduleGroupSupport;
 	private final AuditService auditService;
 	private final UniversityProvisioning universityProvisioning;
+	private final com.uniguard.schedule.repository.UniversityRepository universityRepository;
 	private final com.uniguard.schedule.service.TwoFactorService twoFactorService;
 	private final TransactionTemplate transaction;
 
@@ -58,6 +59,7 @@ public class DataInitializer implements ApplicationRunner {
 		ScheduleGroupSupport scheduleGroupSupport,
 		AuditService auditService,
 		UniversityProvisioning universityProvisioning,
+		com.uniguard.schedule.repository.UniversityRepository universityRepository,
 		com.uniguard.schedule.service.TwoFactorService twoFactorService,
 		PlatformTransactionManager transactionManager
 	) {
@@ -71,6 +73,7 @@ public class DataInitializer implements ApplicationRunner {
 		this.scheduleGroupSupport = scheduleGroupSupport;
 		this.auditService = auditService;
 		this.universityProvisioning = universityProvisioning;
+		this.universityRepository = universityRepository;
 		this.twoFactorService = twoFactorService;
 		this.transaction = new TransactionTemplate(transactionManager);
 	}
@@ -106,6 +109,10 @@ public class DataInitializer implements ApplicationRunner {
 		});
 
 		universityProvisioning.ensureData(TenantContext.DEFAULT_UNIVERSITY_ID, defaultName);
+		// Room types (V18): every university gets the default list once, and rooms without a type get one.
+		for (var university : universityRepository.findAll()) {
+			universityProvisioning.ensureRoomTypes(university.getId());
+		}
 	}
 
 	/**

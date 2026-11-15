@@ -94,6 +94,14 @@ public class Settings {
 	@Column(name = "chief_max_parallel_rooms", nullable = false)
 	private int chiefMaxParallelRooms = SchedulingSettings.DEFAULT_CHIEF_PARALLEL_ROOMS;
 
+	/**
+	 * Room Allocation seats at most this percentage of each room's seats (gaps between students against cheating):
+	 * 70 = a 60-seat room takes 42 students. 100 = every seat. The room's own capacity is not changed.
+	 */
+	@Builder.Default
+	@Column(name = "exam_fill_percent", nullable = false, columnDefinition = "integer default 100 not null")
+	private int examFillPercent = SchedulingSettings.DEFAULT_EXAM_FILL_PERCENT;
+
 	/** Signature blocks at the foot of exported schedules (title + name), at most four. */
 	@Builder.Default
 	@Convert(converter = DocumentSignaturesConverter.class)

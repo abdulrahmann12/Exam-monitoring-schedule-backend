@@ -13,10 +13,13 @@ import com.uniguard.schedule.entity.Settings;
  * @param minRestMinutes         minimum break between two sessions of one person on a day
  * @param studentsPerInvigilator one invigilator per N students (rooms with a student count)
  * @param chiefMaxParallelRooms  rooms one chief invigilator may cover at the same time (1..10; invigilators: 1)
+ * @param examFillPercent        Room Allocation seats at most this % of each room's seats (10..100; 100 = every seat)
  */
 public record SchedulingSettings(int maxDutiesPerDay, int maxDutiesPerPeriod, int minRestMinutes, int studentsPerInvigilator,
-                                 int chiefMaxParallelRooms) {
+                                 int chiefMaxParallelRooms, int examFillPercent) {
 
+	public static final int DEFAULT_EXAM_FILL_PERCENT = 100;
+	public static final int MIN_EXAM_FILL_PERCENT = 10;
 	public static final int DEFAULT_CHIEF_PARALLEL_ROOMS = 2;
 	public static final int MAX_CHIEF_PARALLEL_ROOMS = 10;
 	public static final SchedulingSettings NONE = new SchedulingSettings(0, 0, 0, 0);
@@ -29,6 +32,23 @@ public record SchedulingSettings(int maxDutiesPerDay, int maxDutiesPerPeriod, in
 		chiefMaxParallelRooms = chiefMaxParallelRooms <= 0
 			? DEFAULT_CHIEF_PARALLEL_ROOMS
 			: Math.min(chiefMaxParallelRooms, MAX_CHIEF_PARALLEL_ROOMS);
+		examFillPercent = examFillPercent <= 0 || examFillPercent > 100
+			? DEFAULT_EXAM_FILL_PERCENT
+			: Math.max(examFillPercent, MIN_EXAM_FILL_PERCENT);
+	}
+
+	/** Same limits, every seat used for exams. */
+	public SchedulingSettings(int maxDutiesPerDay, int maxDutiesPerPeriod, int minRestMinutes, int studentsPerInvigilator,
+	                          int chiefMaxParallelRooms) {
+		this(maxDutiesPerDay, maxDutiesPerPeriod, minRestMinutes, studentsPerInvigilator, chiefMaxParallelRooms, DEFAULT_EXAM_FILL_PERCENT);
+	}
+
+	/** Exam seats of a room: the fill percentage of its capacity, rounded down, at least 1 (70% of 60 = 42). */
+	public int examSeats(int capacity) {
+		if (capacity <= 0) {
+			return 0;
+		}
+		return Math.max(1, capacity * examFillPercent / 100);
 	}
 
 	/** Same limits with the default chief parallel-room limit. */
@@ -50,7 +70,8 @@ public record SchedulingSettings(int maxDutiesPerDay, int maxDutiesPerPeriod, in
 			settings.getMaxDutiesPerPeriod(),
 			settings.getMinRestMinutes(),
 			settings.getStudentsPerInvigilator(),
-			settings.getChiefMaxParallelRooms()
+			settings.getChiefMaxParallelRooms(),
+			settings.getExamFillPercent()
 		);
 	}
 

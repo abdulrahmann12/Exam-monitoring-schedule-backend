@@ -128,7 +128,7 @@ public class SecurityConfig {
 				// it belongs to no university and never sees university data.
 				.requestMatchers(HttpMethod.GET, "/**").hasAnyRole(ADMIN, SCHEDULER, VIEWER, DEMO)
 				// Auto-assign preview writes nothing; the demo may try it, viewers have no use for it.
-				.requestMatchers(HttpMethod.POST, "/api/assignments/generate-preview").hasAnyRole(ADMIN, SCHEDULER, DEMO)
+				.requestMatchers(HttpMethod.POST, "/api/assignments/generate-preview", "/api/room-allocation/preview").hasAnyRole(ADMIN, SCHEDULER, DEMO)
 				// Every other change. DEMO is listed so DemoReadOnlyFilter (which runs earlier)
 				// answers with its clear "disabled in demo mode" message; it blocks all demo writes.
 				.anyRequest().hasAnyRole(ADMIN, SCHEDULER, DEMO))
