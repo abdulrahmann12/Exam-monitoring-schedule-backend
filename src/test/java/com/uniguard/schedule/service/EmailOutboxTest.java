@@ -83,6 +83,7 @@ class EmailOutboxTest {
 
 	@BeforeEach
 	void setUp() throws Exception {
+		messages.deleteAll(); // other test classes (invitations, password resets) also write to the outbox
 		when(mailService.isConfigured()).thenReturn(true);
 		doReturn("brevo-message-1").when(mailService).sendHtmlWithPdf(anyString(), anyString(), anyString(), anyString(), any());
 		admin = token(newUser(AdminRole.ADMIN, TenantContext.DEFAULT_UNIVERSITY_ID));
@@ -110,7 +111,7 @@ class EmailOutboxTest {
 
 		assertThat(outbox.processDue()).isEqualTo(4);
 		verify(mailService, times(4)).sendHtmlWithPdf(anyString(), anyString(), anyString(), anyString(), any());
-		List<EmailMessage> all = messages.findAll();
+		List<EmailMessage> all = ours();
 		assertThat(all).hasSize(4).allSatisfy(message -> {
 			assertThat(message.getStatus()).isEqualTo(EmailMessage.SENT);
 			assertThat(message.getProviderMessageId()).isEqualTo("brevo-message-1");
@@ -146,7 +147,7 @@ class EmailOutboxTest {
 		notifySchedule(false);
 		JsonNode resend = notifySchedule(true); // before the worker ran
 		assertThat(resend.get("queued").asInt()).isEqualTo(4);
-		assertThat(messages.findAll().stream().filter(m -> "CANCELLED".equals(m.getStatus())).count()).isEqualTo(4);
+		assertThat(ours().stream().filter(m -> "CANCELLED".equals(m.getStatus())).count()).isEqualTo(4);
 		assertThat(outbox.processDue()).isEqualTo(4); // each person still gets exactly one email
 	}
 
@@ -155,10 +156,10 @@ class EmailOutboxTest {
 		doThrow(new MailDeliveryException("Brevo answered 503: busy", true, null)).when(mailService).sendHtmlWithPdf(anyString(), anyString(), anyString(), anyString(), any());
 		notifySchedule(false);
 		// The worker runs every few seconds; give it up to three runs, as in the app.
-		for (int run = 0; run < 3 && messages.findAll().stream().anyMatch(m -> m.getAttempts() == 0); run++) {
+		for (int run = 0; run < 3 && ours().stream().anyMatch(m -> m.getAttempts() == 0); run++) {
 			outbox.processDue();
 		}
-		List<EmailMessage> waiting = messages.findAll();
+		List<EmailMessage> waiting = ours();
 		assertThat(waiting).allSatisfy(message -> {
 			assertThat(message.getStatus()).isEqualTo(EmailMessage.QUEUED);
 			assertThat(message.getAttempts()).isEqualTo(1);
@@ -172,13 +173,13 @@ class EmailOutboxTest {
 		doReturn("brevo-message-2").when(mailService).sendHtmlWithPdf(anyString(), anyString(), anyString(), anyString(), any());
 		makeAllDue();
 		assertThat(outbox.processDue()).isEqualTo(4);
-		assertThat(messages.findAll()).allSatisfy(message -> assertThat(message.getStatus()).isEqualTo(EmailMessage.SENT));
+		assertThat(ours()).allSatisfy(message -> assertThat(message.getStatus()).isEqualTo(EmailMessage.SENT));
 
 		// A rejected address fails at once and keeps the reason; it can be sent again later.
 		doThrow(new MailDeliveryException("Brevo answered 400: invalid email", false, null)).when(mailService).sendHtmlWithPdf(anyString(), anyString(), anyString(), anyString(), any());
 		notifySchedule(true);
 		outbox.processDue();
-		List<EmailMessage> failed = messages.findAll().stream().filter(m -> EmailMessage.FAILED.equals(m.getStatus())).toList();
+		List<EmailMessage> failed = ours().stream().filter(m -> EmailMessage.FAILED.equals(m.getStatus())).toList();
 		assertThat(failed).hasSize(4).allSatisfy(message -> {
 			assertThat(message.getAttempts()).isEqualTo(1);
 			assertThat(message.getLastError()).contains("invalid email");
@@ -189,7 +190,7 @@ class EmailOutboxTest {
 		mockMvc.perform(authed(post("/api/email-outbox/" + failed.get(0).getId() + "/retry"), admin)).andExpect(status().isNoContent());
 		mockMvc.perform(authed(post("/api/email-outbox/retry-failed"), admin)).andExpect(status().isOk()).andExpect(jsonPath("$.queued").value(3));
 		assertThat(outbox.processDue()).isEqualTo(4);
-		assertThat(messages.findAll().stream().filter(m -> EmailMessage.FAILED.equals(m.getStatus()))).isEmpty();
+		assertThat(ours().stream().filter(m -> EmailMessage.FAILED.equals(m.getStatus()))).isEmpty();
 	}
 
 	@Test
@@ -200,7 +201,7 @@ class EmailOutboxTest {
 			makeAllDue();
 			outbox.processDue();
 		}
-		assertThat(messages.findAll()).allSatisfy(message -> {
+		assertThat(ours()).allSatisfy(message -> {
 			assertThat(message.getStatus()).isEqualTo(EmailMessage.FAILED);
 			assertThat(message.getAttempts()).isEqualTo(EmailOutboxService.MAX_ATTEMPTS);
 		});
@@ -210,7 +211,7 @@ class EmailOutboxTest {
 	@Test
 	void anEmailIsTakenByOnlyOneWorkerAndACrashedWorkerReleasesIt() throws Exception {
 		notifySchedule(false);
-		UUID id = messages.findAll().get(0).getId();
+		UUID id = ours().get(0).getId();
 		TransactionTemplate tx = new TransactionTemplate(transactionManager);
 		Instant now = Instant.now();
 		Integer firstWorker = tx.execute(s -> messages.claim(id, now, now.minusSeconds(600)));
@@ -249,7 +250,7 @@ class EmailOutboxTest {
 		University other = provisioning.create("Outbox Other University", "outbox-other-" + COUNTER.incrementAndGet() + "-" + UUID.randomUUID().toString().substring(0, 6));
 		String otherAdmin = token(newUser(AdminRole.ADMIN, other.getId()));
 		mockMvc.perform(authed(get("/api/email-outbox"), otherAdmin)).andExpect(jsonPath("$.content.length()").value(0));
-		UUID someoneElses = messages.findAll().get(0).getId();
+		UUID someoneElses = ours().get(0).getId();
 		mockMvc.perform(authed(post("/api/email-outbox/" + someoneElses + "/retry"), otherAdmin)).andExpect(status().isNotFound());
 	}
 
@@ -264,7 +265,7 @@ class EmailOutboxTest {
 		EmailMessage logged = null;
 		for (int i = 0; i < 50 && (logged == null || !EmailMessage.SENT.equals(logged.getStatus())); i++) {
 			Thread.sleep(100); // sent by a background thread
-			logged = messages.findAll().stream().filter(m -> email.equals(m.getRecipient())).findFirst().orElse(null);
+			logged = ours().stream().filter(m -> email.equals(m.getRecipient())).findFirst().orElse(null);
 		}
 		assertThat(logged).isNotNull();
 		assertThat(logged.getKind()).isEqualTo(EmailMessage.KIND_INVITE);
@@ -325,8 +326,13 @@ class EmailOutboxTest {
 			.andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
 	}
 
+	/** Only this test's emails: other test classes send invitations in the background to the same test database. */
+	private List<EmailMessage> ours() {
+		return messages.findAll().stream().filter(m -> m.getRecipient() != null && m.getRecipient().endsWith("@outbox.test")).toList();
+	}
+
 	private void makeAllDue() {
-		new TransactionTemplate(transactionManager).executeWithoutResult(s -> messages.findAll().forEach(m -> {
+		new TransactionTemplate(transactionManager).executeWithoutResult(s -> ours().forEach(m -> {
 			if (EmailMessage.QUEUED.equals(m.getStatus())) {
 				m.setNextAttemptAt(Instant.now().minusSeconds(1));
 				messages.save(m);
